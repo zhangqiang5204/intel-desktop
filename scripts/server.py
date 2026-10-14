@@ -149,6 +149,8 @@ class NativeBridge:
         if self.process is not None:
             if self.process.poll() is not None:
                 raise RuntimeError('Native helper exited. Start a new MCP session; actions are never automatically replayed.')
+            if self.process.stdin.closed:
+                raise RuntimeError('Native helper is draining capture cleanup after EOF; no new actions or replacement helper.')
             return
         if not NATIVE.is_file():
             raise RuntimeError('Native helper missing. Run native/build.sh first.')
@@ -156,17 +158,12 @@ class NativeBridge:
 
     def close(self):
         p = self.process
-        if p is None: return
-        try:
-            p.stdin.close()
-            p.wait(timeout=2)
-        except (BrokenPipeError, subprocess.TimeoutExpired):
-            p.terminate()
-            try: p.wait(timeout=2)
-            except subprocess.TimeoutExpired: p.kill(); p.wait()
-        finally:
-            p.stdout.close()
+        if p is None: return True
+        from process_shutdown import drain_process_after_eof
+        closed = drain_process_after_eof(p)
+        if closed:
             self.process = None
+        return closed
 
     def call(self, cmd, args):
         context=current_context()
@@ -192,7 +189,8 @@ class NativeBridge:
             return response
         self.start()
         if cmd in {'visual_read', 'background_visual_read', 'visual_click', 'visual_key',
-                   'visual_type_text', 'visual_scroll', 'background_type_text', 'batch'}:
+                   'visual_type_text', 'visual_scroll', 'background_type_text', 'background_chat_edit', 'batch'} or (
+                       cmd == 'inspect' and args.get('include_image') is True):
             process = self.process
             context.on_finish(self, lambda: self._finish_capture_scope(context, process))
         return self._exchange(cmd, args, context)
@@ -210,7 +208,11 @@ class NativeBridge:
             if not response.get('ok') or response.get('result', {}).get('capture_scope_released') is not True:
                 raise RuntimeError('Native capture scope did not finish')
         except Exception:
-            self.close()  # Only this bridge's child; no unrelated session.
+            if not self.close():
+                # The failed stop response is a known command result, but the
+                # capture remains pending. Keep this child's FIFO claim until
+                # its EOF drain actually exits instead of starting another stream.
+                context.register_native_pid(process.pid, process=process)
             raise
 
     def _exchange(self, cmd, args, context):
@@ -508,7 +510,7 @@ def handle(req):
     method = req.get('method')
     if method == 'initialize':
         return {'protocolVersion': req.get('params', {}).get('protocolVersion', '2024-11-05'),
-                'capabilities': {'tools': {'listChanged': False}}, 'serverInfo': {'name': 'intel-desktop', 'version': '0.1.70'},
+                'capabilities': {'tools': {'listChanged': False}}, 'serverInfo': {'name': 'intel-desktop', 'version': '0.1.72'},
                 'instructions': 'Native Intel Mac desktop control. Use only for apps authorized by the current user task. Prefer AX inspection and fixed-target batches for foreground work. desktop_observe reads a currently authorized native app without focus or input; known chats use their adapters and unfamiliar apps retain current-model AX plus masked-window visual recognition; historical HID interruption does not block read-only observation. desktop_chat background:true supports current-chat draft/clear with a freshly verified recipient; chat may be omitted. The process/window-bound editor preserves system focus, verifies exact before/after values, yields on target-app contention and never sends or falls back to global input. Known foreign-app activity may continue on the same or another display. For shared foreground input, claim once per authorized stage, monitor new post-claim activity and restore the saved origin only without takeover; never refocus or replay an interrupted stage. Optional MCP PNG blocks and semantic state are consumed by the current model, without a new model service. The WeChat route takes a fresh complete exact-filter PTS frame each time; bound warm streams and exact-pixel ROI OCR rows do not substitute old-frame input proof. Feishu paste temporarily leases and ownership-restores the general clipboard; clipboard isolation is not provided. All MCP calls and direct NativeBridge calls share one FIFO. Use a stable task_id and an atomic chat, batch or transaction for a foreground stage; separate model calls do not reserve the desktop while thinking. Actual response versions and execution metadata outrank a stale tool description. WeChat AX shells support navigation-only coordinate clicks in the verified sidebar; compositor/body typing still requires the visual route. Never claim success from posted events alone. Sending requires current-human authorization for the exact recipient and content; unsent-draft tests never send.'}
     if method == 'ping': return {}
     if method == 'tools/list': return {'tools': TOOLS}
@@ -521,8 +523,8 @@ def handle(req):
         arguments = params.get('arguments', {})
         response=managed_call(cmd,arguments)
         if cmd == 'status' and response.get('ok'):
-            response['result']['plugin_version'] = '0.1.70'
-            response['result']['plugin_runtime_features'] = {'guarded_focus_return': 2, 'operation_scoped_capture': True}
+            response['result']['plugin_version'] = '0.1.72'
+            response['result']['plugin_runtime_features'] = {'guarded_focus_return': 3, 'operation_scoped_capture': True, 'feishu_send_stages': 1, 'feishu_submit_focus_return': 1, 'all_window_menu_optional': 1, 'capture_lifecycle_shutdown': 2, 'background_chat_capture_finalizer': 1, 'feishu_complete_body_proof': 1, 'wechat_pre_input_focus_return': 1, 'wechat_submit_focus_return': 1, 'completion_purpose_proof': 1}
         response['bridge_elapsed_ms'] = round((time.perf_counter() - started) * 1000, 3)
         content = mcp_content(response)
         if any(block['type'] == 'image' for block in content['content']):

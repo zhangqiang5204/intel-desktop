@@ -24,8 +24,11 @@ def bounds(x, y, width, height):
 
 
 def ax(identifier, role, x, y, width, height, **fields):
+    # Preserve the legacy cap-boundary fixture's unknown completeness; callers
+    # can still supply the real native positive flag for exactly 4000 chars.
+    proof = {"value_complete": True, "value_truncated": False} if isinstance(fields.get("value"), str) and len(fields["value"]) < 4000 else {}
     return {"element_id": identifier, "role": role, "position": {"x": x, "y": y},
-            "size": {"width": width, "height": height}, "secure": False, "enabled": True, **fields}
+            "size": {"width": width, "height": height}, "secure": False, "enabled": True, **proof, **fields}
 
 
 class WeChatFake:
@@ -120,8 +123,13 @@ class WeChatFake:
                           for anchor in request.get("anchor_texts", [])]
         truncated = len(rows) > request.get("max_text_rows", 100)
         rows = rows[:request.get("max_text_rows", 100)]
-        return {"target_pid": self.pid, "window_frame": dict(self.frame), "snapshot_id": f"snapshot-{len(self.calls)}",
-                "ocr": rows, "anchor_matches": anchor_matches, "target_visible_verified": confirmed, "ocr_truncated": truncated}
+        return {"target_pid": self.pid, "window_id": 91, "display_topology_signature": "one-screen",
+                "window_frame": dict(self.frame), "snapshot_id": f"snapshot-{len(self.calls)}",
+                "ocr": rows, "anchor_matches": anchor_matches, "target_visible_verified": confirmed, "ocr_truncated": truncated,
+                **({"read_only_background": True, "input_eligible": False, "target_identity_verified": True,
+                    "content_available": True, "captured_regions": [dict(self.frame)],
+                    "ocr_regions": copy.deepcopy(request.get("regions", [self.frame])), "ocr_scope": "requested_regions"}
+                   if request.get("command") == "background_visual_read" else {})}
 
     def __call__(self, request):
         self.calls.append(copy.deepcopy(request))
@@ -131,7 +139,9 @@ class WeChatFake:
         if command == "inspect":
             return {"ok": True, "result": {"target_pid": self.pid, "windows": [self.window()], "elements": [self.window()], "truncated": False}}
         if command == "focus":
-            return {"ok": True, "result": {"target_pid": self.pid, "foreground_verified": True}}
+            return {"ok": True, "result": {"target_pid": self.pid, "foreground_verified": True,
+                    **({"focus_restored": True, "focus_restore_attempted": True, "restore_reason": "previous_window_verified"}
+                       if request.get("restore_previous") else {})}}
         if command == "batch":
             results, latest = [], None
             for action in request["actions"]:
@@ -147,7 +157,7 @@ class WeChatFake:
                 results.append({"command": action["command"], "result": response["result"]})
                 latest = response["result"].get("snapshot_id", latest)
             return {"ok": True, "result": {"target_pid": self.pid, "results": results, "completed_count": len(results)}}
-        if command == "visual_read":
+        if command in {"visual_read", "background_visual_read"}:
             result = self.visual(request)
             if (self.timeout_missing_anchors and request.get("confirm_target") and not result["target_visible_verified"]
                     and request.get("anchor_wait_timeout_ms", 3000) > 0):
@@ -298,6 +308,21 @@ class FeishuFake:
                 rows.append(ax("dialog", "AXSheet", 620, 155, 560, 680, actions=[]))
         for i, text in enumerate(self.pages[self.page]):
             rows.append(ax(f"message-{i}", "AXStaticText", 680, 220 + i * 40, 220, 30, value=text))
+        if self.history_web_area:
+            # Real native Send proof has explicit same-window chat ancestry;
+            # flat legacy read fixtures are not a substitute for that binding.
+            rows.append(ax("current-chat-body", "AXGroup", 620, 211, 560, 577,
+                           parent_id="current-chat-web", actions=[]))
+            if self.header_counts:
+                rows.append(ax("header-line", "AXGroup", 620, 155, 560, 56,
+                               parent_id="current-chat-web", actions=[]))
+            for row in rows:
+                if row["element_id"] in {"composer", "current-chat-web", "header"}:
+                    row.setdefault("parent_id", "main" if row["element_id"] == "current-chat-web" else "current-chat-web")
+                elif row["element_id"].startswith("message-") or row["element_id"] in {"wide-message", "clipped-body-history"}:
+                    row.setdefault("parent_id", "current-chat-body")
+        for row in rows:
+            row["element_pid"] = self.pid
         return {"target_pid": self.pid, "windows": [window], "elements": rows, "truncated": self.ax_truncated, "menu_elements": []}
 
     def __call__(self, request):

@@ -198,38 +198,45 @@ class CompletionTests(unittest.TestCase):
             self.assertEqual(len([call for call in fake.calls if call["command"] == "submit_text"]), 1)
 
     def test_takeover_after_submit_preserves_unknown_state_and_stops_without_replay(self):
-        for factory in (WeChatSendFake, FeishuSendFake):
+        for factory in (WeChatSendFake,):
             fake = factory()
+            fake.no_echo = True
             posted = False
             def callback(request):
                 nonlocal posted
-                if request["command"] == "status" and posted:
-                    return {"ok": True, "result": {"frontmost_app_bundle_id": fake.app, "frontmost_pid": fake.pid, "interrupted": "manual_keyboard"}}
                 result = fake(request)
+                if posted and request.get("restore_previous"):
+                    result["result"].update(focus_restored=False, focus_restore_attempted=False, restore_reason="user_takeover")
                 posted |= request["command"] == "submit_text" or request.get("key") == "return"
                 return result
-            response = self.execute(send_request(fake), callback)
+            with patch("chat_workflows.time.monotonic", side_effect=Clock()), patch("chat_workflows.time.sleep"):
+                response = self.execute(send_request(fake), callback)
             self.assertEqual(response["error"]["code"], "user_interrupted")
             self.assertIsNone(response["sent"])
-            self.assertEqual(len([call for call in fake.calls if call["command"] == "focus"]), 1)
+            self.assertEqual(len([call for call in fake.calls if call["command"] == "focus"]), 2)
             self.assertEqual(len([call for call in fake.calls if call["command"] == "submit_text" or call.get("key") == "return"]), 1)
 
-    def test_takeover_during_reply_wait_preserves_already_verified_send(self):
-        fake = FeishuSendFake()
-        posted, post_status_calls = False, 0
+    def test_user_activity_after_feishu_focus_return_keeps_readonly_reply_wait(self):
+        from test_feishu_focus_restore import FocusFeishuFake
+        fake = FocusFeishuFake()
+        returned = False
         def callback(request):
-            nonlocal posted, post_status_calls
-            if request["command"] == "status" and posted:
-                post_status_calls += 1
-                if post_status_calls == 3:
-                    return {"ok": True, "result": {"frontmost_app_bundle_id": fake.app, "frontmost_pid": fake.pid, "interrupted": "manual_keyboard"}}
+            nonlocal returned
+            if returned:
+                self.assertEqual(request["command"], "inspect")
             result = fake(request)
-            posted |= request["command"] == "submit_text"
+            if request.get("restore_previous"):
+                returned = True
+                fake.front = ("com.example.user-app", 901)
+                fake.interrupted = "manual_keyboard"
             return result
-        response = self.execute(send_request(fake, reply_contains="尚未出现的回复", wait_timeout_ms=60000), callback)
-        self.assertEqual(response["error"]["code"], "user_interrupted")
-        self.assertTrue(response["sent"])
-        self.assertEqual(response["submission_state"], "observed_in_chat")
+        with patch("chat_workflows.time.monotonic", side_effect=Clock()), patch("chat_workflows.time.sleep"):
+            response = self.execute(send_request(fake, reply_contains="尚未出现的回复", wait_timeout_ms=60000), callback)
+        self.assertTrue(response["ok"], response)
+        self.assertTrue(response["result"]["sent"])
+        self.assertEqual(response["result"]["submission_state"], "observed_in_chat")
+        self.assertTrue(response["result"]["observation_timed_out"])
+        self.assertEqual(fake.restore_calls, 1)
         self.assertEqual(len([call for call in fake.calls if call["command"] == "submit_text"]), 1)
 
     def test_native_zero_event_denial_is_not_replayed_and_reports_not_sent(self):

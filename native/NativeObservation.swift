@@ -438,10 +438,11 @@ final class NativeObservation {
             if readable {
                 guard ProcessInfo.processInfo.systemUptime < deadline else { reasons.insert("time_limit"); break }
                 let counts = axChildCounts(element)
+                reasons.formUnion(axChildCountReasons(counts))
                 if depth < maxDepth {
                     let available = max(0, maxNodes - rows.count - (queue.count - index))
                     let children = axNavigationChildren(element, limit: available, counts: counts)
-                    if children.truncated { reasons.insert("node_limit") }
+                    reasons.formUnion(children.reasons)
                     queue += children.elements.map { ($0, depth + 1, elementID) }
                 } else if counts.contains(where: { $0.count > 0 }) { reasons.insert("depth_limit") }
             }

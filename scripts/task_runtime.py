@@ -28,13 +28,14 @@ COMPLETION_PURPOSES = {"send_selection_acceptance", "maintenance_acceptance", "c
 WORKFLOW_DURATION_BASIS = "queued_workflow_invocation"
 TASK_DURATION_BASIS = "first_recorded_preflight_to_verified_completion"
 SCRIPT_ACTIONS = {"register", "list", "run", "analyze"}
+COMPLETION_PROOFS = {"proof_chat_send", "proof_text_selection"}
 FLAGS = {"proof_full_value", "proof_same_target", "focus_verified", "proof_focus_preserved",
          "foreground_preserved", "system_focus_preserved", "postcondition_verified",
          "precondition_verified", "recipient_verified", "draft_verified", "value_verified",
          "operation_verified", "response_verified", "target_verified", "empty_verified",
          "capture_scope_released", "focus_return_required", "focus_claim_verified", "focus_restore_requested",
          "business_completed", "scope_completed", "focus_restored", "focus_yielded_to_user", "focus_return_unverified", "input_may_be_partial", "temporary_clipboard_used", "clipboard_restored",
-         "clipboard_external_change", "clipboard_isolated"}
+         "clipboard_external_change", "clipboard_isolated", *COMPLETION_PROOFS}
 _LOCAL = threading.local()
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
@@ -183,7 +184,9 @@ def _native_metadata(response):
             break
     flags = {}
     for source in (response, result, error, details):
-        flags.update(_flags(source))
+        # Business proof comes from strict workflow classification, never a
+        # native response echo or an unrelated native postcondition.
+        flags.update({key: value for key, value in _flags(source).items() if key not in COMPLETION_PROOFS})
     unknown = any(source.get("completion_unknown") is True for source in (response, result, error, details))
     return event_count, flags, _label(error.get("code"), None), unknown
 
@@ -702,6 +705,15 @@ class TaskRuntime:
                 if existing != completion:
                     raise ValueError("A recorded completion unit cannot change its references or endpoint")
                 return {**existing, "recorded": False}
+            # Preserve saved legacy records without deriving proof from their
+            # purpose. Only new records need these explicit business checks.
+            if purpose != "maintenance_acceptance":
+                required = ({"proof_chat_send"} if purpose == "chat_send_acceptance" else
+                            {"proof_text_selection"} if purpose == "text_selection_acceptance" else COMPLETION_PROOFS)
+                proven = {row["operation_id"]: {key for key in required if _flags(json.loads(row["flags_json"])).get(key) is True}
+                          for row in rows if row["state"] == "verified" and operation_duration(row)["timing_complete"]}
+                if not proven.get(verified_operation_id) or not required.issubset(set().union(*proven.values())):
+                    raise ValueError("Task completion purpose requires matching runtime business postconditions")
             if len(saved) >= 8:
                 raise ValueError("This operation's completion metadata bound is reached")
             saved.append(completion)

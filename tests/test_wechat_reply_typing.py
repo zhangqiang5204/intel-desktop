@@ -52,6 +52,8 @@ class WeChatReplyFake(WeChatSendFake):
                                  "bounds": bounds(self.frame["x"] + 338, self.frame["y"] + 19, 130, 20)})
         if state.get("omit_header"):
             value["ocr"] = [row for row in value["ocr"] if row["text"] != self.title]
+            for match in value["anchor_matches"]:
+                match["matching_ocr"] = [row for row in match["matching_ocr"] if row["text"] != self.title]
         if "ocr_truncated" in state:
             if state["ocr_truncated"] is None:
                 value.pop("ocr_truncated", None)
@@ -60,11 +62,11 @@ class WeChatReplyFake(WeChatSendFake):
         return value
 
     def __call__(self, request):
-        if (request["command"] == "status" and self.posted
+        if (request["command"] in {"status", "background_visual_read"} and self.posted
                 and self.interrupt_after_reads is not None
                 and self.post_submit_reads >= self.interrupt_after_reads):
             self.interrupted = "manual_keyboard"
-        if request["command"] == "visual_read" and self.posted:
+        if request["command"] in {"visual_read", "background_visual_read"} and self.posted:
             if self.post_submit_reads >= 40:
                 raise AssertionError("Unbounded read-only typing refresh")
             index = min(self.post_submit_reads, len(self.frames) - 1)
@@ -84,7 +86,7 @@ class WeChatReplyFake(WeChatSendFake):
         response = super().__call__(request)
         if request["command"] == "visual_key" and request.get("key") == "return" and response["ok"]:
             self.posted = True
-        if request["command"] == "visual_read" and self.posted and response["ok"]:
+        if request["command"] in {"visual_read", "background_visual_read"} and self.posted and response["ok"]:
             value = response["result"]
             self.frame_results.append({"header": self.title,
                                        "target_visible_verified": value.get("target_visible_verified"),
@@ -193,8 +195,7 @@ class WeChatReplyTypingTests(unittest.TestCase):
                 self.assertEqual(result["observation_waited_ms"], 600)
                 self.assertEqual(result["observation_transient_header_count"], 5)
                 after_typing = fake.calls[fake.first_typing_call:]
-                self.assertTrue(all(call["command"] in {"status", "visual_read", "focus"} for call in after_typing))
-                self.assertTrue(all(call.get("restore_previous") is True for call in after_typing if call["command"] == "focus"))
+                self.assertTrue(all(call["command"] == "background_visual_read" for call in after_typing))
 
     def test_persistent_typing_with_a_new_draft_cannot_claim_the_current_composer_is_empty(self):
         changed_draft = "未确认的当前草稿"
@@ -330,7 +331,7 @@ class WeChatReplyTypingTests(unittest.TestCase):
                 self.assert_header_rejected(session, value)
                 fake = WeChatReplyFake([{}, {"header": "对方正在输入…", "ocr_truncated": truncated}])
                 response, _ = self.execute_send(fake)
-                self.assert_send_proof_preserved_on_error(response, fake, "target_not_found")
+                self.assert_send_proof_preserved_on_error(response, fake, "send_state_unknown")
                 self.assertNotIn("header_status", response["error"]["details"])
 
     def test_typing_without_send_footer_does_not_qualify_as_status(self):
@@ -351,25 +352,27 @@ class WeChatReplyTypingTests(unittest.TestCase):
                 with self.assertRaises(Stopped):
                     session.wechat_header(value, wanted + "其他")
 
-    def test_user_takeover_during_typing_wait_is_not_swallowed(self):
+    def test_user_activity_after_return_during_typing_wait_is_preserved_without_reclaim(self):
         fake = WeChatReplyFake([{}, {"header": "对方正在输入⋯"}])
         fake.interrupt_after_reads = 2
         response, _ = self.execute_send(fake)
-        self.assert_send_proof_preserved_on_error(response, fake, "user_interrupted")
-        self.assertFalse(response["focus_restore_attempted"])
-        self.assertEqual(fake.post_submit_reads, 2)
+        result = self.assert_verified_send(response, fake)
+        self.assertEqual(result["reply_observation_state"], "pending_typing")
+        self.assertEqual(fake.interrupted, "manual_keyboard")
+        self.assertTrue(response["focus_restored"])
+        self.assertEqual(sum(call.get("restore_previous") is True for call in fake.calls), 1)
 
     def test_pid_change_in_typing_frame_is_not_swallowed(self):
         fake = WeChatReplyFake([{}, {"header": "对方正在输入⋯", "pid_changed": True}])
         response, _ = self.execute_send(fake)
         self.assert_send_proof_preserved_on_error(response, fake, "target_changed")
-        self.assertFalse(response["focus_restore_attempted"])
+        self.assertTrue(response["focus_restored"])  # The earlier real return is historical proof.
 
     def test_geometry_change_in_typing_frame_is_not_swallowed(self):
         fake = WeChatReplyFake([{}, {"header": "对方正在输入⋯", "geometry_changed": True}])
         response, _ = self.execute_send(fake)
         self.assert_send_proof_preserved_on_error(response, fake, "target_geometry_changed")
-        self.assertFalse(response["focus_restore_attempted"])
+        self.assertTrue(response["focus_restored"])  # No second return after a changed background frame.
 
     def test_typing_retries_use_original_deadline_including_prior_normal_wait(self):
         fake = WeChatReplyFake([{}, {}, *[{"header": "对方正在输入…"}] * 12, {"reply": MARKER}])

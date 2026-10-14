@@ -5,6 +5,55 @@ import CoreVideo
 import CoreImage
 import ApplicationServices
 
+private let visualCaptureLifecycles = CaptureLifecycleRegistry()
+
+// All SCStream transport calls live here. Register before any throwing setup,
+// and keep failed/pending cleanup reachable after its request or pool releases.
+func visualCaptureRegister(_ stream: SCStream) throws {
+    do {
+        guard visualCaptureLifecycles.waitForPendingCleanup(timeout: 1.5) else {
+            throw CaptureLifecycle.Failure.cleanupPending
+        }
+        try visualCaptureLifecycles.register(key: ObjectIdentifier(stream),
+            start: { completion in stream.startCapture(completionHandler: completion) },
+            stop: { completion in stream.stopCapture(completionHandler: completion) },
+            startFailureIsTerminal: { error in
+                let value = error as NSError
+                // SCError.h: authorization/entitlement rejection or no source.
+                // Generic failed-to-start, connection invalid/interrupted,
+                // internal/partial failures, and stop-state errors stay unknown.
+                return value.domain == SCStreamErrorDomain &&
+                    [-3801, -3803, -3815].contains(value.code)
+            })
+    } catch {
+        throw fail("capture_cleanup_pending", "Previous capture cleanup has not completed or the helper is closing",
+                   visualCaptureLifecycles.status)
+    }
+}
+
+func visualCaptureStart(_ stream: SCStream, completion: @escaping (Error?) -> Void) {
+    visualCaptureLifecycles.start(key: ObjectIdentifier(stream), completion: completion)
+}
+
+@discardableResult
+func visualCaptureStop(_ streams: [SCStream], wait: Bool = false) -> Bool {
+    visualCaptureLifecycles.stop(keys: streams.map(ObjectIdentifier.init), timeout: wait ? 1.5 : 0)
+}
+
+func visualCaptureDidStop(_ stream: SCStream) {
+    visualCaptureLifecycles.didStop(key: ObjectIdentifier(stream))
+}
+
+func visualCaptureLifecycleStatus() -> [String: Any] { visualCaptureLifecycles.status }
+
+// False leaves the registered streams alive for a later drain. On helper exit,
+// use shuttingDown=true and keep servicing callbacks until this returns true.
+@discardableResult
+func visualCaptureDrain(timeout: Double = 5, shuttingDown: Bool = false) -> Bool {
+    _ = visualWarmPool.release()
+    return visualCaptureLifecycles.drain(timeout: timeout, shuttingDown: shuttingDown)
+}
+
 // Error diagnostics never retain an NSError, description, userInfo or an
 // arbitrary domain. These fields can safely travel through metadata-only logs.
 private struct VisualCaptureSystemFailure {
@@ -25,6 +74,8 @@ private struct VisualCaptureSystemFailure {
 
 private enum VisualWarmCaptureStage: String {
     case beforeShareableContent = "before_shareable_content"
+    case requestingShareableContent = "requesting_shareable_content"
+    case bindingCaptureSession = "binding_capture_session"
     case primingReusedAppFilter = "priming_reused_app_filter"
     case refreshingCommittedExactFilter = "refreshing_committed_exact_filter"
     case startingAppFilter = "starting_app_filter"
@@ -97,6 +148,7 @@ private final class VisualWarmReceiver: NSObject, SCStreamOutput, SCStreamDelega
         queue.sync { (buffer, pts, error, completeCount, epoch.discarded) }
     }
     func stream(_ stream: SCStream, didStopWithError failure: Error) {
+        visualCaptureDidStop(stream)
         let diagnostic = VisualCaptureSystemFailure(failure)
         queue.async { self.error = diagnostic; self.buffer = nil }
     }
@@ -171,34 +223,13 @@ private final class VisualWarmSession {
         exactFilterCommitted = true
     }
     func start(_ stream: SCStream, completion: @escaping (Error?) -> Void) {
-        stream.startCapture { [self] error in
-            lock.lock(); let closed = stopped; lock.unlock()
-            // A deadline/release can stop the session while startCapture is
-            // still pending. Stop again after a late successful start so the
-            // asynchronous callback cannot leave an orphaned capture stream.
-            if closed, error == nil { stream.stopCapture(completionHandler: nil) }
-            completion(error)
-        }
+        visualCaptureStart(stream, completion: completion)
     }
     func suspend() { outputs.forEach { $0.suspend() } }
     @discardableResult func stop(wait: Bool = false) -> Bool {
         lock.lock(); let alreadyStopped = stopped; stopped = true; exactFilterCommitted = false; lock.unlock()
-        guard !alreadyStopped else { return true }
-        suspend()
-        if !wait { streams.forEach { $0.stopCapture(completionHandler: nil) }; return true }
-        let completions = streams.map { stream -> VisualCompletion<Bool> in
-            let box = VisualCompletion<Bool>()
-            stream.stopCapture { error in box.complete(.success(error == nil)) }
-            return box
-        }
-        let deadline = ProcessInfo.processInfo.systemUptime + 1.5
-        while completions.contains(where: { $0.get() == nil }), ProcessInfo.processInfo.systemUptime < deadline {
-            _ = CFRunLoopRunInMode(.defaultMode, 0.005, true)
-        }
-        return completions.allSatisfy { box in
-            guard let result = box.get(), case .success(true) = result else { return false }
-            return true
-        }
+        if !alreadyStopped { suspend() }
+        return visualCaptureStop(streams, wait: wait)
     }
 }
 
@@ -281,8 +312,15 @@ private let visualWarmPool = VisualWarmPool()
 
 // Reuse inside one queued operation only. The bridge releases and awaits stop
 // before giving another session the FIFO; the timer is a bounded backstop.
-@discardableResult func visualWarmCaptureRelease(wait: Bool = false) -> Bool { visualWarmPool.release(wait: wait) }
-func visualWarmCapturePoolStatus() -> [String: Any] { visualWarmPool.status }
+@discardableResult func visualWarmCaptureRelease(wait: Bool = false) -> Bool {
+    let released = visualWarmPool.release()
+    // A previous release may already have removed the pool entry while its
+    // asynchronous stop is still pending. Always include those retained streams.
+    return wait ? visualCaptureLifecycles.drain(timeout: 1.5) : released
+}
+func visualWarmCapturePoolStatus() -> [String: Any] {
+    visualWarmPool.status.merging(visualCaptureLifecycles.status) { _, current in current }
+}
 
 // Bounded timings contain no window titles, OCR text, or event content.
 final class VisualCaptureMetrics {
@@ -364,7 +402,7 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
     var captureStage = VisualWarmCaptureStage.beforeShareableContent
     defer {
         if !retained {
-            activeSession?.stop(); constructingStreams.forEach { $0.stopCapture(completionHandler: nil) }
+            activeSession?.stop(); visualCaptureStop(constructingStreams)
             visualWarmPool.release(token: leaseToken, onlyIdle: leaseToken == nil)
         }
     }
@@ -382,6 +420,7 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
         guard value > 0 else { throw fail("visual_frame_timeout", "Fresh window-filter request exceeded its deadline") }
         return value
     }
+    captureStage = .requestingShareableContent
     let content: SCShareableContent = try visualAwait(try remaining()) { done in
         SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { value, error in
             if let error { done(.failure(error)) } else if let value { done(.success(value)) }
@@ -389,6 +428,7 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
         }
     }
     timing.mark("shareable_content_and_initial_guard")
+    captureStage = .bindingCaptureSession
     let apps = content.applications.filter { $0.processID == selected.pid && $0.bundleIdentifier == "com.tencent.xinWeChat" }
     let main = content.windows.filter { $0.windowID == selected.windowID && $0.owningApplication?.processID == selected.pid &&
         $0.owningApplication?.bundleIdentifier == "com.tencent.xinWeChat" && $0.frame == selected.frame &&
@@ -449,6 +489,7 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
             config.showsCursor = false; config.capturesAudio = false; config.shouldBeOpaque = false
             config.ignoreShadowsSingleWindow = true; config.ignoreShadowsDisplay = true; config.includeChildWindows = false
             let receiver = VisualWarmReceiver(), stream = SCStream(filter: initial, configuration: config, delegate: receiver)
+            try visualCaptureRegister(stream)
             constructingStreams.append(stream)
             try stream.addStreamOutput(receiver, type: .screen, sampleHandlerQueue: receiver.queue)
             outputs.append(receiver)
@@ -598,6 +639,13 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
         "pixel_change_proven": false, "source": committedRefreshDelivered ? "public_SCStream_committed_display_bound_exact_window_filter_refresh" : "public_SCStream_app_then_display_bound_exact_window_filter",
         "phase_ms": timing.json, "full_guard_schedule": "before_shareable_before_update_after_complete",
         "wait_poll_checks": "input_monitor_only_no_input_performed"])
+    } catch let changed as VisualSearchObservationChanged {
+        // These are target-guard control signals, not ScreenCaptureKit errors.
+        // The caller discards this attempt and reobserves under its original
+        // deadline and transition binding; this layer must not replay input.
+        throw changed
+    } catch let changed as VisualNavigationHintObservationChanged {
+        throw changed
     } catch var error as HelperError {
         error.details["capture_stage"] = captureStage.rawValue
         error.details["capture_phase_ms"] = timing.json; throw error

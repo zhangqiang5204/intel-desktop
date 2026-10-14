@@ -83,24 +83,46 @@ func axChildCounts(_ element: AXUIElement) -> [(name: String, count: Int, result
     }
 }
 
+func axChildCountReasons(_ counts: [(name: String, count: Int, result: AXError)]) -> Set<String> {
+    // Unsupported/absent optional child orders are normal on leaves. A failed
+    // read has unknown cardinality, even though its diagnostic count is zero.
+    counts.contains { ![.success, .attributeUnsupported, .noValue].contains($0.result) } ? ["child_count_failed"] : []
+}
+
 func axNavigationChildren(_ element: AXUIElement, limit: Int,
-                          counts: [(name: String, count: Int, result: AXError)]) -> (elements: [AXUIElement], truncated: Bool) {
-    guard limit > 0 else { return ([], counts.contains { $0.count > 0 }) }
+                          counts: [(name: String, count: Int, result: AXError)]) -> (elements: [AXUIElement], truncated: Bool, reasons: Set<String>) {
+    var reasons = axChildCountReasons(counts)
+    if counts.contains(where: { $0.count > max(0, limit) }) { reasons.insert("node_limit") }
+    guard limit > 0 else { return ([], !reasons.isEmpty, reasons) }
     var children: [AXUIElement] = []
-    let truncated = counts.contains { $0.count > limit }
     var buckets: [CFHashCode: [AXUIElement]] = [:]
     for source in counts where source.result == .success && source.count > 0 {
+        let requested = min(source.count, limit)
+        var raw: CFArray?
+        let copied = AXUIElementCopyAttributeValues(element, source.name as CFString, 0, requested, &raw)
+        guard copied == .success, let values = raw as? [AnyObject] else {
+            reasons.insert("child_read_failed"); continue
+        }
+        // A shorter/malformed prefix after a positive count is not a proven
+        // empty subtree. Keep usable children, but never claim a complete tree.
+        if values.count != requested { reasons.insert("child_read_failed") }
         // Read a bounded prefix from both orders. CFEqual prevents duplicate nodes
         // while preserving distinct elements whose CFHash happens to collide.
-        for child in axElements(element, source.name, limit: limit) {
+        for value in values.prefix(requested) {
+            guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                reasons.insert("child_read_failed"); continue
+            }
+            let child = unsafeBitCast(value, to: AXUIElement.self)
             let hash = CFHash(child)
             if buckets[hash]?.contains(where: { CFEqual($0, child) }) == true { continue }
-            guard children.count < limit else { return (children, true) }
+            guard children.count < limit else {
+                reasons.insert("node_limit"); return (children, true, reasons)
+            }
             buckets[hash, default: []].append(child)
             children.append(child)
         }
     }
-    return (children, truncated)
+    return (children, !reasons.isEmpty, reasons)
 }
 
 func number(_ request: [String: Any], _ name: String) throws -> Double {
@@ -302,6 +324,34 @@ func axElements(_ element: AXUIElement, _ name: String, limit: Int = 2000) -> [A
     }
 }
 
+func inspectionWindowList(_ root: AXUIElement) -> (windows: [AXUIElement], metadata: [String: Any]) {
+    var count: CFIndex = 0
+    let counted = AXUIElementGetAttributeValueCount(root, kAXWindowsAttribute as CFString, &count)
+    var metadata: [String: Any] = ["window_list_count_result": axResult(counted),
+        "window_list_available": counted == .success, "window_list_complete": counted == .success,
+        "window_list_reported_count": counted == .success ? max(0, count) : 0]
+    guard counted == .success, count > 0 else { return ([], metadata) }
+    var raw: CFArray?
+    let copied = AXUIElementCopyAttributeValues(root, kAXWindowsAttribute as CFString, 0, min(count, 128), &raw)
+    metadata["window_list_copy_result"] = axResult(copied)
+    let values = raw as? [AnyObject]
+    let rows = (values ?? []).compactMap { value -> AXUIElement? in
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+    metadata["window_list_available"] = copied == .success && values != nil
+    metadata["window_list_complete"] = copied == .success && count <= 128 && rows.count == count
+    return (rows, metadata)
+}
+
+// Menu enumeration is optional during a title-free window-list observation.
+// Bind only to that observation's focused/unique root, without a second window
+// read or choosing an arbitrary window when Feishu is opening its search modal.
+func inspectionMenuWindowIndex(windowCount: Int, focusedIndex: Int?) -> Int? {
+    if let focusedIndex, focusedIndex >= 0 && focusedIndex < windowCount { return focusedIndex }
+    return windowCount == 1 ? 0 : nil
+}
+
 func axActions(_ element: AXUIElement) -> [String] {
     var names: CFArray?
     guard AXUIElementCopyActionNames(element, &names) == .success else { return [] }
@@ -496,6 +546,39 @@ struct OwnedFeishuMainReturn {
     let target: Target
     let frame: CGRect
     let windowID: CGWindowID
+    let taskID: String
+    let operationID: String
+    let activityRevision: UInt64
+    let until: Double
+}
+struct OwnedFeishuSearchOpen {
+    let main: OwnedFeishuMainReturn
+}
+func feishuOwnedScopeMatches(task: String, operation: String, pid: pid_t, revision: UInt64, until: Double,
+                            currentTask: String, currentOperation: String?, currentPID: pid_t,
+                            currentRevision: UInt64, now: Double) -> Bool {
+    !operation.isEmpty && task == currentTask && operation == currentOperation && pid == currentPID &&
+        revision == currentRevision && now.isFinite && until.isFinite && now >= 0 && now <= until
+}
+func implicitFocusClaimDisposition(sameTask: Bool, sameOperation: Bool, complete: Bool,
+                                   monitorAvailable: Bool, interrupted: Bool,
+                                   sameProcess: Bool, stillFocused: Bool) -> String {
+    if sameTask && complete && monitorAvailable && !interrupted && sameProcess && stillFocused { return "reuse" }
+    return sameTask && sameOperation ? "stop" : "new_claim"
+}
+func feishuSearchOpenControlAllowed(role: String, title: String?, description: String?) -> Bool {
+    if role == "AXMenuItem" { return title == "搜索" }
+    guard role == "AXButton" else { return false }
+    return [title, description].compactMap { $0 }.contains { label in
+        let normalized = label.filter { !$0.isWhitespace }.replacingOccurrences(of: "（", with: "(")
+            .replacingOccurrences(of: "）", with: ")")
+        return normalized == "搜索" || normalized == "搜索(⌘K)" || normalized == "搜索(⌘＋K)"
+    }
+}
+func feishuAXMainWindowKind(available: Bool, matchesSavedMain: Bool, matchesUniqueSearchModal: Bool) -> String {
+    if !available { return "missing" }
+    if matchesSavedMain { return "saved_main" }
+    return matchesUniqueSearchModal ? "known_search_modal" : "other"
 }
 func ownedFeishuReturnAllowed(claimComplete: Bool, interrupted: Bool, actionAccepted: Bool,
                              sameIdentity: Bool, modalAbsent: Bool, actualMainFocused: Bool,
@@ -554,6 +637,7 @@ func feishuSearchReplacementTargetAllowed(bundle: String, title: String, role: S
 
 struct PreviousFocusRecord {
     let runtimeTaskID:String
+    let runtimeOperationID:String?
     let application:NSRunningApplication
     let root:AXUIElement
     let window:AXUIElement?
@@ -563,6 +647,8 @@ struct PreviousFocusRecord {
     var task:Target
     var claimComplete=false
     var ownedFeishuReturn: OwnedFeishuMainReturn?
+    var ownedFeishuOpen: OwnedFeishuSearchOpen?
+    var ownedFeishuFocusUpdated = false
     var ownedFeishuReturnDiagnostic: [String: Any]?
 }
 
@@ -1219,7 +1305,9 @@ final class DesktopHelper {
 
     func selectWindow(_ root: AXUIElement, title: String?) throws -> AXUIElement {
         let all = windows(root)
-        guard !all.isEmpty else { throw fail("window_not_found", "No accessible windows found for the running application") }
+        let selectionMetadata: [String: Any] = ["window_selection_scope": title == nil ? "focused_or_unique" : "exact_title",
+            "window_list_count": all.count, "requested_window_kind": title == "飞书" ? "feishu_main" : title == feishuSearchWindowTitle ? "feishu_search" : "other"]
+        guard !all.isEmpty else { throw fail("window_not_found", "No accessible windows found for the running application", selectionMetadata) }
         if let title {
             let matched = all.filter { axString($0, kAXTitleAttribute) == title }
             if matched.count > 1, let actual = actualMainWindow(root),
@@ -1236,7 +1324,7 @@ final class DesktopHelper {
                 }
             }
             guard matched.count == 1 else {
-                throw fail(matched.isEmpty ? "window_not_found" : "ambiguous_window", "Expected exactly one window with title: \(title)")
+                throw fail(matched.isEmpty ? "window_not_found" : "ambiguous_window", "Expected exactly one window with title: \(title)", selectionMetadata)
             }
             return matched[0]
         }
@@ -1419,7 +1507,8 @@ final class DesktopHelper {
         guard readResult == .success, let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else {
             metadata["menus_available"] = false
             metadata["menus_excluded_subtrees"] = [] as [[String: Any]]
-            return ([], metadata, [])
+            let reasons: Set<String> = [.attributeUnsupported, .noValue].contains(readResult) ? [] : ["menu_read_failed"]
+            return ([], metadata, reasons)
         }
         let menuBar = unsafeBitCast(raw, to: AXUIElement.self)
         metadata["menus_available"] = true
@@ -1466,6 +1555,7 @@ final class DesktopHelper {
                 if let glyph = axValue(item, "AXMenuItemCmdGlyph") as? NSNumber { row["shortcut_glyph"] = glyph.intValue }
             }
             let counts = secure ? [] : axChildCounts(item)
+            reasons.formUnion(axChildCountReasons(counts))
             if !secure { row["child_sources"] = counts.map { ["attribute": $0.name, "count": $0.count, "result": axResult($0.result)] as [String: Any] } }
             if let bounds = axBounds(item) {
                 row["position"] = ["x": bounds.minX, "y": bounds.minY]
@@ -1476,7 +1566,7 @@ final class DesktopHelper {
             if level < depth && !secure {
                 let available = max(0, limit - elements.count - (queue.count - index))
                 let children = axNavigationChildren(item, limit: available, counts: counts)
-                if children.truncated { reasons.insert("node_limit") }
+                reasons.formUnion(children.reasons)
                 queue.append(contentsOf: children.elements.map { ($0, level + 1, id, path) })
             } else if !secure && counts.contains(where: { $0.count > 0 }) { reasons.insert("depth_limit") }
         }
@@ -1501,10 +1591,26 @@ final class DesktopHelper {
         cache.removeAll(keepingCapacity: true)
         inspectedDialogs.removeAll(keepingCapacity: true)
         var enablement = accessibilityEnablement(root, application: app, bundle: bundle, requested: enable)
-        let all = windows(root)
-        let verifiedMain = actualMainWindow(root)
+        let windowRead = inspectionWindowList(root)
+        let all = windowRead.windows
+        // Consume only this operation's accepted exact search navigation while
+        // reading the new state. This also handles read-only stages which may
+        // wait for a reply long after closing their initial search modal.
+        if bundle == "com.bytedance.macos.feishu", !all.isEmpty, previousFocus?.runtimeTaskID == currentRuntimeTaskID {
+            let modalCount = all.filter { axString($0, kAXTitleAttribute) == feishuSearchWindowTitle }.count
+            if modalCount == 0 && previousFocus?.ownedFeishuReturn != nil { _ = adoptOwnedFeishuMainReturn() }
+            if modalCount == 1 && previousFocus?.ownedFeishuOpen != nil { _ = adoptOwnedFeishuSearchOpen() }
+        }
+        let verifiedMain = all.isEmpty ? nil : actualMainWindow(root)
         let selected: [AXUIElement]
-        if title != nil { selected = [try selectWindow(root, title: title)] } else { selected = all }
+        if title != nil {
+            do { selected = [try selectWindow(root, title: title)] }
+            catch let error as HelperError {
+                var details = error.details.merging(windowRead.metadata) { _, new in new }
+                details["inspection_stage"] = "exact_window_selection"
+                throw fail(error.code, error.message, details)
+            }
+        } else { selected = all }
         // An accepted AX navigation may open or close an app-owned window.
         // Fresh inspection advances only the focus receipt; cached controls
         // remain window-bound and no new input or authorization is produced.
@@ -1526,7 +1632,10 @@ final class DesktopHelper {
                 acceptedAXWindowTransition = nil
             }
         }
-        let menuWindow = includeMenus ? try selectWindow(root, title: title) : nil
+        let observedFocus = all.isEmpty ? nil : axElement(root, kAXFocusedWindowAttribute)
+        let focusedIndex = observedFocus.flatMap { focused in all.firstIndex(where: { CFEqual($0, focused) }) }
+        let menuWindow: AXUIElement? = !includeMenus ? nil : title != nil ? selected.first :
+            inspectionMenuWindowIndex(windowCount: all.count, focusedIndex: focusedIndex).map { all[$0] }
         if enablement["any_write_accepted"] as? Bool == true {
             let started = ProcessInfo.processInfo.systemUptime
             let waitDeadline = started + 0.6
@@ -1542,7 +1651,7 @@ final class DesktopHelper {
         } else { enablement["waited_ms"] = 0 }
         var elements: [[String: Any]] = []
         var metadata: [[String: Any]] = []
-        let focusedInspectionWindow = title == nil ? axElement(root, kAXFocusedWindowAttribute) : nil
+        let focusedInspectionWindow = title == nil ? observedFocus : nil
         let focusedSheets = focusedInspectionWindow.map { axElements($0, nativeAXSheetsAttribute, limit: 16) } ?? []
         var queue: [(AXUIElement, AXUIElement, Int, String?, AXUIElement?)] = selected.map { item in
             // Some apps publish the same sheet both in AXWindows and AXSheets.
@@ -1556,7 +1665,7 @@ final class DesktopHelper {
         var index = 0
         var seen: [CFHashCode: [AXUIElement]] = [:]
         let deadline = ProcessInfo.processInfo.systemUptime + 8
-        var truncationReasons: Set<String> = []
+        var truncationReasons: Set<String> = windowRead.metadata["window_list_complete"] as? Bool == true ? [] : ["window_list_incomplete"]
         var roleCounts: [String: Int] = [:]
         var attributeProbes: [[String: Any]] = []
         var imagePrivacyNodes: [InspectionImagePrivacyNode] = []
@@ -1610,6 +1719,7 @@ final class DesktopHelper {
             }
             if !secure, ["AXTextArea", "AXTextField"].contains(role), let range = axSelectedRange(item) { row["selected_range"] = ["location": range.location, "length": range.length] }
             let counts = secure ? [] : axChildCounts(item)
+            truncationReasons.formUnion(axChildCountReasons(counts))
             if !secure {
                 row["child_sources"] = counts.map { ["attribute": $0.name, "count": $0.count, "result": axResult($0.result)] as [String: Any] }
             }
@@ -1633,7 +1743,7 @@ final class DesktopHelper {
             if level < depth && !secure {
                 let available = max(0, limit - elements.count - (queue.count - index))
                 let children = axNavigationChildren(item, limit: available, counts: counts)
-                if children.truncated { truncationReasons.insert("node_limit") }
+                truncationReasons.formUnion(children.reasons)
                 if includeImage { imageChildren = children.elements }
                 queue.append(contentsOf: children.elements.map { ($0, window, level + 1, id, dialog) })
                 // AppKit can publish AXSheets separately from AXChildren.
@@ -1666,9 +1776,10 @@ final class DesktopHelper {
             menuMetadata["window_node_count"] = elements.count
             truncationReasons.formUnion(menus.reasons)
         }
-        let focusedDiagnostic = focusedElementDiagnostic(root, application: app, bundle: bundle, selected: selected, displays: displays)
+        let focusedDiagnostic = selected.isEmpty ? ["available": false, "within_selected_window": false] :
+            focusedElementDiagnostic(root, application: app, bundle: bundle, selected: selected, displays: displays)
         var currentWindow: [String: Any] = ["available": false]
-        if let focused = axElement(root, kAXFocusedWindowAttribute),
+        if let focused = observedFocus,
            all.contains(where: { CFEqual($0, focused) }), let frame = axBounds(focused) {
             var elementPID: pid_t = 0
             if AXUIElementGetPid(focused, &elementPID) == .success {
@@ -1697,6 +1808,10 @@ final class DesktopHelper {
             "coordinate_system": quartzCoordinateSystem, "displays": displays.displays.map { $0.json },
             "display_topology_generation": displayTopologyGeneration]
         result["image_requested"] = includeImage
+        result.merge(windowRead.metadata) { _, new in new }
+        result["menu_window_available"] = menuWindow != nil
+        result["menu_window_scope"] = !includeMenus ? "not_requested" : title != nil ? "exact_title" : menuWindow != nil ? "observed_focused_or_unique" : "unavailable"
+        result["menus_skipped"] = !includeMenus || menuWindow == nil
         result["image_available"] = false
         result["image_unavailable_reason"] = "not_requested"
         if includeImage, let title, selected.count == 1 {
@@ -1754,6 +1869,12 @@ final class DesktopHelper {
     }
 
     func taskStillFocused(_ target: Target) -> Bool {
+        // Feishu's search panel is a separate concrete AXWindow. Only our
+        // accepted search navigation may migrate that claim; arbitrary same-
+        // app dialogs must not implicitly inherit it.
+        if target.bundleID == "com.bytedance.macos.feishu" {
+            return (try? settledFocusedWindow(target)).map { CFEqual($0, target.window) } == true
+        }
         if (try? currentInspectedDialog(target)) != nil { return true }
         // A newly inspected app-modal panel may replace the document's focused
         // AXWindow. Its fresh app-root association preserves this task's claim.
@@ -1777,8 +1898,13 @@ final class DesktopHelper {
             // task's origin. Capture this task's actual foreground instead.
             previousFocus=nil;monitor.discardClaim()
         }
-        if let previous=previousFocus,monitor.reason != nil || !previous.claimComplete || !taskStillFocused(previous.task) {previousFocus=nil}
-        if previousFocus != nil {previousFocus!.task=target;previousFocus!.ownedFeishuReturn=nil;previousFocus!.ownedFeishuReturnDiagnostic=nil;return}
+        if let previous=previousFocus,monitor.reason != nil || !previous.claimComplete || !taskStillFocused(previous.task) {
+            if previous.runtimeOperationID != nil && previous.runtimeOperationID == runtimeOperationID {
+                throw fail("focus_scope_changed", "The current operation lost its original focus claim; implicit origin replacement is forbidden", focusScopeChangedDetails(target))
+            }
+            previousFocus=nil
+        }
+        if previousFocus != nil {previousFocus!.task=target;previousFocus!.ownedFeishuReturn=nil;previousFocus!.ownedFeishuOpen=nil;previousFocus!.ownedFeishuReturnDiagnostic=nil;return}
         guard let pid=foregroundMetadata().pid,let app=NSRunningApplication(processIdentifier:pid),
               !app.isTerminated,let originBundle=app.bundleIdentifier,!originBundle.isEmpty else {
             throw fail("previous_focus_unavailable","Cannot record the current foreground application identity before claiming focus")
@@ -1799,14 +1925,14 @@ final class DesktopHelper {
         guard !app.isTerminated,focusOriginAppMatches(pid:pid,bundle:originBundle,actualPID:finalPID,actualBundle:finalBundle) else {
             throw fail("previous_focus_unavailable","Foreground application identity changed while recording the focus origin")
         }
-        previousFocus=PreviousFocusRecord(runtimeTaskID:currentRuntimeTaskID,application:app,root:root,window:originalWindow,frame:originalFrame,
+        previousFocus=PreviousFocusRecord(runtimeTaskID:currentRuntimeTaskID,runtimeOperationID:runtimeOperationID,application:app,root:root,window:originalWindow,frame:originalFrame,
             originBundleID:originBundle,topology:target.displaySignature,task:target)
 
     }
 
     func feishuModalReturnCandidate(_ target: Target) -> OwnedFeishuMainReturn? {
         guard target.bundleID == "com.bytedance.macos.feishu", target.expectedTitle == feishuSearchWindowTitle else { return nil }
-        var diagnostic: [String: Any] = ["candidate_reason": "claim_unavailable", "candidate_available": false,
+        var diagnostic: [String: Any] = ["navigation_kind": "search_to_main", "candidate_reason": "claim_unavailable", "candidate_available": false,
             "target_pid": target.pid, "action_accepted": false, "claim_available": previousFocus != nil,
             "claim_complete": previousFocus?.claimComplete == true, "monitor_available": monitor.available,
             "interrupted": monitor.reason != nil,
@@ -1814,18 +1940,32 @@ final class DesktopHelper {
             "claimed_PID_matches_selected": previousFocus?.task.pid == target.pid,
             "claimed_topology_matches": previousFocus?.topology == target.displaySignature]
         defer { previousFocus?.ownedFeishuReturnDiagnostic = diagnostic }
-        guard let previous = previousFocus, previous.claimComplete, monitor.reason == nil, monitor.available,
+        guard let previous = previousFocus, let operation = runtimeOperationID,
+              previous.runtimeTaskID == currentRuntimeTaskID, previous.runtimeOperationID == operation,
+              previous.claimComplete, monitor.reason == nil, monitor.available,
               CFEqual(previous.task.window, target.window), previous.task.pid == target.pid,
               previous.topology == target.displaySignature else { return nil }
         diagnostic["claim_bound_to_modal"] = true
-        let mains = windows(target.axApplication).filter { axString($0, kAXTitleAttribute) == "飞书" }
+        let all = windows(target.axApplication)
+        let mains = all.filter { axString($0, kAXTitleAttribute) == "飞书" }
         diagnostic["main_AX_match_count"] = mains.count
         diagnostic["candidate_reason"] = "main_AX_identity_unavailable"
         guard mains.count == 1, let frame = axBounds(mains[0]) else { return nil }
         diagnostic["main_frame"] = rectJSON(frame)
         diagnostic["modal_frame"] = axBounds(target.window).map { rectJSON($0) as Any } ?? NSNull()
-        diagnostic["main_matches_AXMainWindow"] = axElement(target.axApplication, kAXMainWindowAttribute).map { CFEqual($0, mains[0]) } == true
-        diagnostic["modal_matches_AXFocusedWindow"] = axElement(target.axApplication, kAXFocusedWindowAttribute).map { CFEqual($0, target.window) } == true
+        let modals = all.filter { axString($0, kAXTitleAttribute) == feishuSearchWindowTitle }
+        let actualMain = axElement(target.axApplication, kAXMainWindowAttribute)
+        let actualFocus = axElement(target.axApplication, kAXFocusedWindowAttribute)
+        let matchesMain = actualMain.map { CFEqual($0, mains[0]) } == true
+        let matchesModal = modals.count == 1 && CFEqual(modals[0], target.window) && actualMain.map { CFEqual($0, target.window) } == true
+        diagnostic["main_matches_AXMainWindow"] = matchesMain
+        diagnostic["search_modal_count"] = modals.count
+        diagnostic["current_AXMainWindow_kind"] = feishuAXMainWindowKind(available: actualMain != nil,
+            matchesSavedMain: matchesMain, matchesUniqueSearchModal: matchesModal)
+        diagnostic["modal_matches_AXFocusedWindow"] = actualFocus.map { CFEqual($0, target.window) } == true
+        diagnostic["current_AXFocusedWindow_kind"] = feishuAXMainWindowKind(available: actualFocus != nil,
+            matchesSavedMain: actualFocus.map { CFEqual($0, mains[0]) } == true,
+            matchesUniqueSearchModal: modals.count == 1 && CFEqual(modals[0], target.window) && actualFocus.map { CFEqual($0, target.window) } == true)
         var pid: pid_t = 0
         diagnostic["candidate_reason"] = "main_PID_mismatch"
         guard AXUIElementGetPid(mains[0], &pid) == .success, pid == target.pid else { return nil }
@@ -1853,7 +1993,139 @@ final class DesktopHelper {
         diagnostic["candidate_reason"] = "bound"
         diagnostic["candidate_available"] = true
         diagnostic["main_CG_window_id"] = id
-        return OwnedFeishuMainReturn(target: main, frame: frame, windowID: id)
+        return OwnedFeishuMainReturn(target: main, frame: frame, windowID: id, taskID: currentRuntimeTaskID,
+            operationID: operation, activityRevision: monitor.focusQuietObservation.revision,
+            until: ProcessInfo.processInfo.systemUptime + 15)
+    }
+
+    func feishuMainIdentity(_ candidate: OwnedFeishuMainReturn, diagnostic: inout [String: Any]) -> Bool {
+        let main = candidate.target
+        let revision = monitor.focusQuietObservation.revision
+        let now = ProcessInfo.processInfo.systemUptime
+        diagnostic["claimed_task_matches"] = candidate.taskID == currentRuntimeTaskID && previousFocus?.runtimeTaskID == currentRuntimeTaskID
+        diagnostic["claimed_operation_matches"] = candidate.operationID == runtimeOperationID && previousFocus?.runtimeOperationID == runtimeOperationID
+        diagnostic["claimed_PID_matches_selected"] = main.pid == previousFocus?.task.pid
+        diagnostic["activity_revision_matches"] = candidate.activityRevision == revision
+        diagnostic["candidate_within_deadline"] = now.isFinite && candidate.until.isFinite && now >= 0 && now <= candidate.until
+        diagnostic["monitor_available"] = monitor.available
+        diagnostic["interrupted"] = monitor.reason != nil
+        diagnostic["adoption_reason"] = "task_identity_mismatch"
+        guard !main.application.isTerminated,
+              feishuOwnedScopeMatches(task: candidate.taskID, operation: candidate.operationID, pid: main.pid,
+                  revision: candidate.activityRevision, until: candidate.until, currentTask: currentRuntimeTaskID,
+                  currentOperation: runtimeOperationID, currentPID: previousFocus?.task.pid ?? 0,
+                  currentRevision: revision, now: now),
+              previousFocus?.runtimeOperationID == runtimeOperationID,
+              previousFocus?.runtimeTaskID == currentRuntimeTaskID, previousFocus?.claimComplete == true,
+              monitor.reason == nil, monitor.available else { return false }
+        let all = windows(main.axApplication)
+        let modals = all.filter { axString($0, kAXTitleAttribute) == feishuSearchWindowTitle }
+        let actualMain = axElement(main.axApplication, kAXMainWindowAttribute)
+        let actualFocus = axElement(main.axApplication, kAXFocusedWindowAttribute)
+        let matchesMain = actualMain.map { CFEqual($0, main.window) } == true
+        let matchesModal = modals.count == 1 && actualMain.map { CFEqual($0, modals[0]) } == true
+        let axIdentity = axBounds(main.window) == candidate.frame && axString(main.window, kAXTitleAttribute) == "飞书" &&
+            all.contains(where: { CFEqual($0, main.window) })
+        diagnostic["AX_main_identity_unchanged"] = axIdentity
+        diagnostic["search_modal_count"] = modals.count
+        diagnostic["current_AXMainWindow_kind"] = feishuAXMainWindowKind(available: actualMain != nil,
+            matchesSavedMain: matchesMain, matchesUniqueSearchModal: matchesModal)
+        diagnostic["current_AXFocusedWindow_kind"] = feishuAXMainWindowKind(available: actualFocus != nil,
+            matchesSavedMain: actualFocus.map { CFEqual($0, main.window) } == true,
+            matchesUniqueSearchModal: modals.count == 1 && actualFocus.map { CFEqual($0, modals[0]) } == true)
+        diagnostic["main_matches_AXMainWindow"] = matchesMain
+        diagnostic["modal_matches_AXFocusedWindow"] = modals.count == 1 && actualFocus.map { CFEqual($0, modals[0]) } == true
+        diagnostic["adoption_reason"] = "main_AX_identity_unavailable"
+        guard axIdentity else { return false }
+        diagnostic["adoption_reason"] = "AX_main_window_mismatch"
+        guard matchesMain else { return false }
+        let frontmost = axBool(main.axApplication, kAXFrontmostAttribute) == true
+        let topology = (try? currentDisplays().signature) == main.displaySignature
+        diagnostic["target_frontmost"] = frontmost
+        diagnostic["topology_matches"] = topology
+        diagnostic["adoption_reason"] = "post_navigation_proof_incomplete"
+        guard frontmost, topology else { return false }
+        var pid: pid_t = 0
+        let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+        let identity = AXUIElementGetPid(main.window, &pid) == .success && pid == main.pid &&
+            feishuReturnMainCGWindowID(pid: pid, bounds: candidate.frame, actualAXTitle: "飞书", rows: rows) == candidate.windowID
+        diagnostic["CG_main_identity_unchanged"] = identity
+        diagnostic["adoption_reason"] = identity ? "main_identity_verified" : "main_CG_identity_ambiguous_or_unavailable"
+        return identity
+    }
+
+    func feishuSearchOpenCandidate(_ target: Target, element: AXUIElement) -> OwnedFeishuSearchOpen? {
+        guard target.bundleID == "com.bytedance.macos.feishu", target.expectedTitle == "飞书" else { return nil }
+        var diagnostic: [String: Any] = ["navigation_kind": "main_to_search", "candidate_reason": "claim_unavailable",
+            "candidate_available": false, "action_accepted": false, "claim_available": previousFocus != nil,
+            "claim_complete": previousFocus?.claimComplete == true, "monitor_available": monitor.available,
+            "interrupted": monitor.reason != nil,
+            "claimed_window_matches_selected": previousFocus.map { CFEqual($0.task.window, target.window) } == true,
+            "claimed_PID_matches_selected": previousFocus?.task.pid == target.pid,
+            "claimed_topology_matches": previousFocus?.topology == target.displaySignature,
+            "claimed_task_matches": previousFocus?.runtimeTaskID == currentRuntimeTaskID,
+            "claimed_operation_matches": runtimeOperationID != nil && previousFocus?.runtimeOperationID == runtimeOperationID]
+        defer { if previousFocus?.runtimeTaskID == currentRuntimeTaskID { previousFocus?.ownedFeishuReturnDiagnostic = diagnostic } }
+        let role = axString(element, kAXRoleAttribute)
+        diagnostic["search_control_role"] = role == "AXMenuItem" || role == "AXButton" ? role! : role == nil ? "missing" : "other"
+        let stillFocused = taskStillFocused(target)
+        diagnostic["claimed_window_still_focused"] = stillFocused
+        guard target.bundleID == "com.bytedance.macos.feishu", target.expectedTitle == "飞书",
+              let previous = previousFocus, let operation = runtimeOperationID,
+              previous.runtimeTaskID == currentRuntimeTaskID, previous.runtimeOperationID == operation,
+              previous.claimComplete, monitor.available, monitor.reason == nil,
+              previous.task.pid == target.pid, CFEqual(previous.task.window, target.window),
+              previous.topology == target.displaySignature, stillFocused else { return nil }
+        let allowed = feishuSearchOpenControlAllowed(role: role ?? "",
+            title: axString(element, kAXTitleAttribute), description: axString(element, kAXDescriptionAttribute))
+        diagnostic["search_control_allowed"] = allowed
+        diagnostic["candidate_reason"] = "search_control_not_exact"
+        guard allowed else { return nil }
+        let modalCount = windows(target.axApplication).filter { axString($0, kAXTitleAttribute) == feishuSearchWindowTitle }.count
+        diagnostic["search_modal_count"] = modalCount
+        diagnostic["candidate_reason"] = "existing_search_modal"
+        guard modalCount == 0 else { return nil }
+        diagnostic["candidate_reason"] = "main_AX_identity_unavailable"
+        guard let frame = axBounds(target.window) else { return nil }
+        let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+        diagnostic["candidate_reason"] = "main_CG_identity_ambiguous_or_unavailable"
+        guard let id = feishuReturnMainCGWindowID(pid: target.pid, bounds: frame,
+            actualAXTitle: axString(target.window, kAXTitleAttribute) ?? "", rows: rows) else { return nil }
+        diagnostic["candidate_reason"] = "bound"
+        diagnostic["candidate_available"] = true
+        return OwnedFeishuSearchOpen(main: OwnedFeishuMainReturn(target: target, frame: frame, windowID: id,
+            taskID: currentRuntimeTaskID, operationID: operation, activityRevision: monitor.focusQuietObservation.revision,
+            until: ProcessInfo.processInfo.systemUptime + 15))
+    }
+
+    func adoptOwnedFeishuSearchOpen(_ selected: Target? = nil) -> Bool {
+        guard let candidate = previousFocus?.ownedFeishuOpen else { return false }
+        var diagnostic = previousFocus?.ownedFeishuReturnDiagnostic ?? [:]
+        diagnostic["navigation_kind"] = "main_to_search"
+        defer { previousFocus?.ownedFeishuReturnDiagnostic = diagnostic }
+        guard feishuMainIdentity(candidate.main, diagnostic: &diagnostic) else { return false }
+        let main = candidate.main.target
+        diagnostic["adoption_reason"] = "claimed_main_window_mismatch"
+        guard previousFocus.map({ CFEqual($0.task.window, main.window) }) == true else { return false }
+        let modals = windows(main.axApplication).filter { axString($0, kAXTitleAttribute) == feishuSearchWindowTitle }
+        diagnostic["search_modal_count"] = modals.count
+        diagnostic["adoption_reason"] = "unique_focused_modal_unavailable"
+        guard modals.count == 1, let frame = axBounds(modals[0]), frame.width > 0, frame.height > 0,
+              axElement(main.axApplication, kAXFocusedWindowAttribute).map({ CFEqual($0, modals[0]) }) == true else { return false }
+        if let selected {
+            diagnostic["adoption_reason"] = "selected_modal_mismatch"
+            guard selected.pid == main.pid, selected.bundleID == main.bundleID,
+                  selected.expectedTitle == feishuSearchWindowTitle, CFEqual(selected.window, modals[0]) else { return false }
+        }
+        var pid: pid_t = 0
+        diagnostic["adoption_reason"] = "modal_PID_or_security_mismatch"
+        guard AXUIElementGetPid(modals[0], &pid) == .success, pid == main.pid, !isSecure(modals[0]) else { return false }
+        previousFocus?.task = Target(bundleID: main.bundleID, application: main.application, axApplication: main.axApplication,
+            window: modals[0], expectedTitle: feishuSearchWindowTitle, displaySignature: main.displaySignature)
+        previousFocus?.ownedFeishuOpen = nil
+        previousFocus?.ownedFeishuFocusUpdated = true
+        diagnostic["adoption_reason"] = "verified_owned_main_to_modal"
+        return true // Preserve the foreign origin and the original input baseline.
     }
 
     func adoptOwnedFeishuMainReturn() -> Bool {
@@ -1861,14 +2133,19 @@ final class DesktopHelper {
         var diagnostic = previous.ownedFeishuReturnDiagnostic ?? [:]
         defer { if !diagnostic.isEmpty { previousFocus?.ownedFeishuReturnDiagnostic = diagnostic } }
         guard let candidate = previous.ownedFeishuReturn else {
-            if !diagnostic.isEmpty { diagnostic["adoption_reason"] = "candidate_unavailable" }
+            if !diagnostic.isEmpty && diagnostic["navigation_kind"] as? String != "main_to_search" { diagnostic["adoption_reason"] = "candidate_unavailable" }
             return false
         }
         diagnostic["adoption_reason"] = "input_monitor_interrupted_or_unavailable"
         guard monitor.reason == nil, monitor.available else { return false }
         let main = candidate.target
         diagnostic["adoption_reason"] = "task_identity_mismatch"
-        guard !main.application.isTerminated, previous.task.pid == main.pid,
+        guard feishuOwnedScopeMatches(task: candidate.taskID, operation: candidate.operationID, pid: main.pid,
+                  revision: candidate.activityRevision, until: candidate.until, currentTask: currentRuntimeTaskID,
+                  currentOperation: runtimeOperationID, currentPID: previous.task.pid,
+                  currentRevision: monitor.focusQuietObservation.revision, now: ProcessInfo.processInfo.systemUptime),
+              previous.runtimeTaskID == currentRuntimeTaskID, previous.runtimeOperationID == runtimeOperationID,
+              !main.application.isTerminated, previous.task.pid == main.pid,
               previous.task.bundleID == main.bundleID, main.bundleID == "com.bytedance.macos.feishu",
               previous.task.expectedTitle == feishuSearchWindowTitle else { return false }
         let all = windows(main.axApplication)
@@ -1899,6 +2176,8 @@ final class DesktopHelper {
               topologyMatches: topologyMatches) else { return false }
         previousFocus?.task = main
         previousFocus?.ownedFeishuReturn = nil
+        previousFocus?.ownedFeishuOpen = nil
+        previousFocus?.ownedFeishuFocusUpdated = true
         diagnostic["adoption_reason"] = "verified_owned_modal_to_main"
         return true // No activation, new claim, monitor reset or input.
     }
@@ -1912,7 +2191,12 @@ final class DesktopHelper {
                 "focus_restore_attempted":false,"restore_raise_attempted":false,
                 "owned_navigation_focus_updated":false,"events_posted":0]
         }
-        let ownedNavigationUpdated = bundle == "com.bytedance.macos.feishu" && previousFocus?.task.bundleID == bundle ? adoptOwnedFeishuMainReturn() : false
+        var ownedNavigationUpdated = false
+        if bundle == "com.bytedance.macos.feishu" && previousFocus?.task.bundleID == bundle {
+            ownedNavigationUpdated = adoptOwnedFeishuMainReturn()
+            ownedNavigationUpdated = adoptOwnedFeishuSearchOpen() || ownedNavigationUpdated
+            ownedNavigationUpdated = previousFocus?.ownedFeishuFocusUpdated == true || ownedNavigationUpdated
+        }
         let previous=previousFocus
         defer{previousFocus=nil;monitor.discardClaim()}
         var raiseResult: AXError?
@@ -1997,12 +2281,36 @@ final class DesktopHelper {
     }
 
     func ensureForegroundClaim(_ target: Target) throws {
-        if previousFocus.map({ focusRecordTaskMatches($0.runtimeTaskID, currentRuntimeTaskID) &&
-            $0.claimComplete && monitor.reason == nil && taskStillFocused($0.task) }) == true { return }
+        if previousFocus?.runtimeTaskID == currentRuntimeTaskID {
+            _ = adoptOwnedFeishuMainReturn()
+            _ = adoptOwnedFeishuSearchOpen(target)
+        }
+        let previous = previousFocus
+        let disposition = implicitFocusClaimDisposition(sameTask: previous?.runtimeTaskID == currentRuntimeTaskID,
+            sameOperation: runtimeOperationID != nil && previous?.runtimeOperationID == runtimeOperationID,
+            complete: previous?.claimComplete == true, monitorAvailable: monitor.available, interrupted: monitor.reason != nil,
+            sameProcess: previous?.task.pid == target.pid && previous?.task.bundleID == target.bundleID,
+            stillFocused: previous.map { taskStillFocused($0.task) } == true)
+        if disposition == "reuse" { return }
+        if disposition == "stop" {
+            try monitor.check()
+            throw fail("focus_scope_changed", "This operation lost its foreground scope; no implicit focus claim or origin replacement", focusScopeChangedDetails(target))
+        }
         // Direct input to an already foreground target also needs the notice.
         // An unfocused app still requires an explicit focus command.
         try verify(target)
         _ = try focus(target)
+    }
+
+    func focusScopeChangedDetails(_ target: Target) -> [String: Any] {
+        ["events_posted": 0, "focus_claim_complete": previousFocus?.claimComplete == true,
+         "focus_claim_same_task": previousFocus?.runtimeTaskID == currentRuntimeTaskID,
+         "focus_claim_same_operation": runtimeOperationID != nil && previousFocus?.runtimeOperationID == runtimeOperationID,
+         "focus_claim_same_process": previousFocus?.task.pid == target.pid && previousFocus?.task.bundleID == target.bundleID,
+         "focus_monitor_available": monitor.available, "focus_monitor_interrupted": monitor.reason != nil,
+         "pending_search_open": previousFocus?.ownedFeishuOpen != nil,
+         "pending_search_return": previousFocus?.ownedFeishuReturn != nil,
+         "owned_navigation_diagnostic": previousFocus?.ownedFeishuReturnDiagnostic.map { $0 as Any } ?? NSNull()]
     }
 
     func waitForFocusHandoff(_ target: Target) throws -> (revision: UInt64, elapsedMS: Double) {
@@ -2032,6 +2340,16 @@ final class DesktopHelper {
     func focus(_ target: Target) throws -> [String: Any] {
         // Every explicit native stage keeps its concrete origin process/window.
         // Restore uses that recorded process object, never a bundle-only lookup.
+        if previousFocus?.runtimeTaskID == currentRuntimeTaskID {
+            _ = adoptOwnedFeishuMainReturn()
+            _ = adoptOwnedFeishuSearchOpen(target)
+        }
+        if let previous = previousFocus, previous.runtimeTaskID == currentRuntimeTaskID,
+           runtimeOperationID != nil, previous.runtimeOperationID == runtimeOperationID,
+           (!previous.claimComplete || monitor.reason != nil || !taskStillFocused(previous.task)) {
+            try monitor.check()
+            throw fail("focus_scope_changed", "An existing operation cannot replace its original focus record", focusScopeChangedDetails(target))
+        }
         let continuing = previousFocus.map {
             focusRecordTaskMatches($0.runtimeTaskID, currentRuntimeTaskID) && $0.claimComplete &&
                 monitor.reason == nil && taskStillFocused($0.task)
@@ -2303,7 +2621,16 @@ final class DesktopHelper {
     func press(_ request: [String: Any], target: Target, permitCenter: Bool) throws -> [String: Any] {
         try verify(target)
         let returnCandidate = feishuModalReturnCandidate(target)
+        var openCandidate: OwnedFeishuSearchOpen?
         func completedNavigation(_ result: [String: Any]) -> [String: Any] {
+            if previousFocus?.ownedFeishuReturnDiagnostic?["navigation_kind"] as? String == "main_to_search" {
+                previousFocus?.ownedFeishuReturnDiagnostic?["action_accepted"] = result["action_accepted"] as? Bool == true
+                previousFocus?.ownedFeishuReturnDiagnostic?["candidate_retained"] = false
+                if let openCandidate {
+                    previousFocus?.ownedFeishuReturnDiagnostic?["activity_revision_matches"] = openCandidate.main.activityRevision == monitor.focusQuietObservation.revision
+                    previousFocus?.ownedFeishuReturnDiagnostic?["adoption_reason"] = "candidate_not_retained"
+                }
+            }
             if target.bundleID == "com.bytedance.macos.feishu", target.expectedTitle == feishuSearchWindowTitle,
                result["action_accepted"] as? Bool == true {
                 previousFocus?.ownedFeishuReturnDiagnostic?["action_accepted"] = true
@@ -2312,6 +2639,17 @@ final class DesktopHelper {
                previousFocus?.task.pid == target.pid,
                previousFocus.map({ CFEqual($0.task.window, target.window) }) == true {
                 previousFocus?.ownedFeishuReturn = returnCandidate
+            }
+            if let openCandidate, result["action_accepted"] as? Bool == true,
+               monitor.reason == nil, monitor.available,
+               openCandidate.main.activityRevision == monitor.focusQuietObservation.revision,
+               previousFocus?.runtimeTaskID == currentRuntimeTaskID,
+               previousFocus?.runtimeOperationID == runtimeOperationID,
+               previousFocus?.task.pid == target.pid,
+               previousFocus.map({ CFEqual($0.task.window, target.window) }) == true {
+                previousFocus?.ownedFeishuOpen = openCandidate
+                previousFocus?.ownedFeishuReturnDiagnostic?["candidate_retained"] = true
+                previousFocus?.ownedFeishuReturnDiagnostic?["accepted_navigation"] = "exact_search_AXPress"
             }
             return result
         }
@@ -2323,9 +2661,14 @@ final class DesktopHelper {
         guard axBool(element, kAXEnabledAttribute) != false else { throw fail("element_disabled", "Target element is disabled") }
         if axActions(element).contains(kAXPressAction) {
             try verify(target)
+            openCandidate = feishuSearchOpenCandidate(target, element: element)
             let activityRevision = monitor.focusQuietObservation.revision
             let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
             guard result == .success else { throw fail("ax_action_failed", "AXPress failed: \(result.rawValue)") }
+            if previousFocus?.ownedFeishuReturnDiagnostic?["navigation_kind"] as? String == "main_to_search" {
+                previousFocus?.ownedFeishuReturnDiagnostic?["action_accepted"] = true
+                previousFocus?.ownedFeishuReturnDiagnostic?["activity_revision_matches"] = activityRevision == monitor.focusQuietObservation.revision
+            }
             try checkAfterAcceptedAction("AXPress")
             if !["com.tencent.xinWeChat", "com.bytedance.macos.feishu"].contains(target.bundleID),
                let operation = runtimeOperationID, monitor.reason == nil,
@@ -2968,8 +3311,9 @@ final class DesktopHelper {
         let command = try string(request, "command")!
         if command == "_finish_operation" {
             guard runtimeOperationID != nil else { throw fail("invalid_request", "Operation release requires runtime correlation") }
-            let released = visualWarmCaptureRelease(wait: true)
-            guard released else { throw fail("visual_capture_release_timeout", "Capture stop did not complete before operation handoff") }
+            visualWarmCaptureRelease()
+            let released = visualCaptureDrain(timeout: 5)
+            guard released else { throw fail("visual_capture_release_timeout", "Capture cleanup is still pending before operation handoff", ["completion_unknown": true]) }
             return ["capture_scope_released": true, "event_count": 0]
         }
         guard commands.contains(command) else { throw fail("unknown_command", "Unknown command: \(command)") }
@@ -2978,7 +3322,7 @@ final class DesktopHelper {
             let frontmost = foregroundMetadata()
             let frontmostPID = frontmost.pid
             let frontmostBundle = frontmostPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
-            return ["version": "0.1.70", "arch": "x86_64", "persistent_jsonl": true,
+            return ["version": "0.1.72", "arch": "x86_64", "persistent_jsonl": true, "capture_lifecycle": visualCaptureLifecycleStatus(),
                 "permissions": ["accessibility": AXIsProcessTrusted(), "post_event": CGPreflightPostEventAccess(),
                     "listen_event": CGPreflightListenEventAccess(), "screen_capture": CGPreflightScreenCaptureAccess()],
                 "takeover_monitor_available": monitor.available,
@@ -3498,6 +3842,70 @@ if CommandLine.arguments.contains("--focus-claim-self-test") {
     check("live_recorded_window_keeps_exact_restore",focusRestoreKeepsWindow(hasRecordedWindow:true,identityVerified:true))
     check("invalidated_AX_wrapper_degrades_without_replacement",!focusRestoreKeepsWindow(hasRecordedWindow:true,identityVerified:false))
     check("app_only_origin_never_invents_a_window",!focusRestoreKeepsWindow(hasRecordedWindow:false,identityVerified:true))
+    func scope(_ task: String = "task-A", _ operation: String? = "operation-A", _ pid: pid_t = 42,
+               _ revision: UInt64 = 7, _ now: Double = 10) -> Bool {
+        feishuOwnedScopeMatches(task: "task-A", operation: "operation-A", pid: 42, revision: 7, until: 15,
+            currentTask: task, currentOperation: operation, currentPID: pid, currentRevision: revision, now: now)
+    }
+    check("owned_Feishu_transition_same_operation_scope", scope())
+    check("owned_Feishu_transition_other_task_denied", !scope("task-B"))
+    check("owned_Feishu_transition_other_operation_denied", !scope("task-A", "operation-B"))
+    check("owned_Feishu_transition_missing_operation_denied", !scope("task-A", nil))
+    check("owned_Feishu_transition_changed_PID_denied", !scope("task-A", "operation-A", 43))
+    check("owned_Feishu_transition_any_external_activity_revision_denied", !scope("task-A", "operation-A", 42, 8))
+    check("owned_Feishu_transition_expired_denied", !scope("task-A", "operation-A", 42, 7, 16))
+    check("owned_Feishu_transition_nonfinite_clock_denied", !scope("task-A", "operation-A", 42, 7, .nan))
+    check("owned_Feishu_transition_negative_clock_denied", !scope("task-A", "operation-A", 42, 7, -1))
+    check("known_search_AXMenuItem_allowed", feishuSearchOpenControlAllowed(role:"AXMenuItem",title:"搜索",description:nil))
+    for label in ["搜索", "搜索(⌘ K)", "搜索（⌘K）", "搜索（⌘＋K）"] {
+        check("known_search_AXButton_allowed", feishuSearchOpenControlAllowed(role:"AXButton",title:nil,description:label))
+    }
+    for label in ["搜索消息", "搜索(其他)", "搜索网络", "搜索（⌘K）其他", "搜索(⌘+K)", "搜索（⌘＋J）", "搜索（⌘＋K）其他"] {
+        check("other_search_label_not_transition_evidence", !feishuSearchOpenControlAllowed(role:"AXButton",title:nil,description:label))
+    }
+    check("text_with_search_name_not_transition_evidence", !feishuSearchOpenControlAllowed(role:"AXStaticText",title:"搜索",description:nil))
+    func disposition(_ flags:[Bool]) -> String {
+        implicitFocusClaimDisposition(sameTask:flags[0],sameOperation:flags[1],complete:flags[2],monitorAvailable:flags[3],
+            interrupted:!flags[4],sameProcess:flags[5],stillFocused:flags[6])
+    }
+    check("continuous_exact_claim_avoids_new_focus", disposition(Array(repeating:true,count:7)) == "reuse")
+    for (index, label) in [(2,"incomplete_claim"),(3,"monitor_unavailable"),(4,"real_user_interruption"),(5,"different_process"),(6,"unowned_window_transition")] {
+        var flags=Array(repeating:true,count:7);flags[index]=false
+        check("same_operation_"+label+"_stops_without_origin_replacement",disposition(flags)=="stop")
+    }
+    check("no_saved_claim_can_start_a_new_authorized_stage", disposition([false,false,false,true,true,true,true]) == "new_claim")
+    // Pure producer/consumer regression for the reported path. Window IDs are
+    // fake identities; no helper, AX read, notice, focus or event is created.
+    let foreignOriginPID=900,feishuPID=42
+    var originalPID=foreignOriginPID,claimedWindow="existing-modal",actualWindow="main",implicitRefocuses=0
+    var allOwnedTransitions=true
+    for nextWindow in ["main","new-search-modal","main"] {
+        actualWindow=nextWindow
+        let owned=scope() && ownedFeishuReturnAllowed(claimComplete:true,interrupted:false,actionAccepted:true,
+            sameIdentity:true,modalAbsent:nextWindow=="main",actualMainFocused:nextWindow=="main",topologyMatches:true)
+        // Forward opening has the same operation/revision binding and the
+        // separate exact unique modal + current main identity checks above.
+        let opened=nextWindow=="new-search-modal" && scope() &&
+            feishuSearchOpenControlAllowed(role:"AXButton",title:"搜索",description:nil)
+        if owned || opened { claimedWindow=actualWindow } else { allOwnedTransitions=false }
+        let decision=disposition([true,true,true,true,true,true,claimedWindow==actualWindow])
+        if decision=="new_claim" {implicitRefocuses+=1;originalPID=feishuPID}
+        allOwnedTransitions = allOwnedTransitions && decision=="reuse"
+    }
+    check("existing_modal_escape_reopen_type_cleanup_keeps_first_foreign_origin",allOwnedTransitions && originalPID==foreignOriginPID && implicitRefocuses==0)
+    check("missing_navigation_evidence_stops_instead_of_capturing_Feishu_origin",disposition([true,true,true,true,true,true,false])=="stop")
+    check("AXMain_diagnostic_classifies_saved_main",feishuAXMainWindowKind(available:true,matchesSavedMain:true,matchesUniqueSearchModal:false)=="saved_main")
+    check("AXMain_diagnostic_classifies_exact_unique_search_modal",feishuAXMainWindowKind(available:true,matchesSavedMain:false,matchesUniqueSearchModal:true)=="known_search_modal")
+    check("AXMain_diagnostic_does_not_call_other_window_a_modal",feishuAXMainWindowKind(available:true,matchesSavedMain:false,matchesUniqueSearchModal:false)=="other")
+    check("AXMain_diagnostic_missing_attribute_remains_unknown",feishuAXMainWindowKind(available:false,matchesSavedMain:false,matchesUniqueSearchModal:false)=="missing")
+    check("AXMain_diagnostic_missing_attribute_rejects_stale_matches",feishuAXMainWindowKind(available:false,matchesSavedMain:true,matchesUniqueSearchModal:true)=="missing")
+    check("all_windows_empty_transition_omits_menus_without_selecting_target",inspectionMenuWindowIndex(windowCount:0,focusedIndex:nil)==nil)
+    check("all_windows_empty_transition_rejects_stale_focus_index",inspectionMenuWindowIndex(windowCount:0,focusedIndex:0)==nil)
+    check("all_windows_ambiguous_unfocused_omits_menus",inspectionMenuWindowIndex(windowCount:2,focusedIndex:nil)==nil)
+    check("all_windows_actual_focused_root_binds_menu",inspectionMenuWindowIndex(windowCount:2,focusedIndex:1)==1)
+    check("all_windows_unique_root_binds_menu",inspectionMenuWindowIndex(windowCount:1,focusedIndex:nil)==0)
+    check("all_windows_stale_focus_does_not_choose_first_root",inspectionMenuWindowIndex(windowCount:2,focusedIndex:2)==nil)
+    check("all_windows_negative_focus_does_not_choose_first_root",inspectionMenuWindowIndex(windowCount:2,focusedIndex:-1)==nil)
     let result:[String:Any]=["ok":cases.allSatisfy{$0["passed"] as? Bool==true},"case_count":cases.count,"cases":cases,"events_posted":0,"capture_executed":false,"live_AX_probe_executed":false,
         "clock_proof":["clock":"CLOCK_UPTIME_RAW","before_ns":rawBefore,"mach_absolute_ns":machNanoseconds,"after_ns":rawAfter,"timebase_numer":timebase.numer,"timebase_denom":timebase.denom]]
     let data=try! JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]);print(String(data:data,encoding:.utf8)!)
@@ -3631,7 +4039,9 @@ if CommandLine.arguments.contains("--visual-visibility-self-test") {
 
 let helper = DesktopHelper()
 let ownPID = ProcessInfo.processInfo.processIdentifier
-while let line = readLine(strippingNewline: true) {
+let serviceInput = NativeServiceInput()
+serviceInput.onShutdown = { helper.monitor.stop() }
+while !serviceInput.shutdownRequested, let line = serviceInput.nextLine() {
     let start = ProcessInfo.processInfo.systemUptime
     var response: [String: Any] = ["id": NSNull(), "pid": ownPID]
     do {
@@ -3655,13 +4065,18 @@ while let line = readLine(strippingNewline: true) {
     response["elapsed_ms"] = Double(Int((ProcessInfo.processInfo.systemUptime - start) * 100000)) / 100
     do {
         let encoded = try JSONSerialization.data(withJSONObject: response, options: [.sortedKeys, .fragmentsAllowed])
-        FileHandle.standardOutput.write(encoded)
-        FileHandle.standardOutput.write(Data([10]))
+        try FileHandle.standardOutput.write(contentsOf: encoded)
+        try FileHandle.standardOutput.write(contentsOf: Data([10]))
     } catch {
-        FileHandle.standardError.write(Data("Response encoding failed: \(error)\n".utf8))
-        FileHandle.standardOutput.write(Data("{\"id\":null,\"ok\":false,\"error\":{\"code\":\"response_encoding_failed\",\"message\":\"Response encoding failed\"},\"elapsed_ms\":0,\"pid\":\(ownPID)}\n".utf8))
+        FileHandle.standardError.write(Data("Response output unavailable; draining capture cleanup\n".utf8))
+        break
     }
 }
 helper.visual.stop()
 visualWarmCaptureRelease()
+// Pending starts own their cleanup until start and stop completion are known.
+// Never exit merely because a drain interval expired.
+while !visualCaptureDrain(timeout: 5, shuttingDown: true) {
+    _ = CFRunLoopRunInMode(.defaultMode, 0.005, true)
+}
 helper.monitor.stop()

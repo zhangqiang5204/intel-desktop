@@ -1877,13 +1877,14 @@ final class VisualFrames: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     func setPhase(_ value: String) { lock.lock(); phase = value; phaseGeneration += 1; latest = nil; lock.unlock() }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
+        visualCaptureDidStop(stream)
         lock.lock(); failure = error.localizedDescription; latest = nil; lock.unlock()
     }
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sample.isValid else { return }
         guard valid() else {
             lock.lock(); failure = "Target foreground or geometry changed"; latest = nil; lock.unlock()
-            stream.stopCapture(completionHandler: nil)
+            visualCaptureStop([stream])
             return
         }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]]
@@ -2044,6 +2045,11 @@ func visualContinuousSubmitRowsComplete(_ groups: [[[String: Any]]]) -> Bool {
 
 // One native type result may be consumed by its immediately following Return.
 // This records observed content, never sending authorization or a caller proof.
+// Complete post-input OCR can take more than one second on this Intel host.
+// Use the existing input-value evidence's two-second frame window, while the
+// separately verified proof still expires 200ms after verification finishes.
+let visualContinuousSubmitMaximumFrameAge: Double = 2
+
 struct VisualContinuousSubmitProof {
     let scope: VisualNativeCommandScope
     let helperID: ObjectIdentifier
@@ -2064,7 +2070,7 @@ struct VisualContinuousSubmitProof {
         guard scope == self.scope, helperID == self.helperID, securityVerified,
               now.isFinite, verifiedAt.isFinite, frameTime.isFinite, inputFinishedAt.isFinite,
               frameTime >= inputFinishedAt, verifiedAt >= frameTime, now >= verifiedAt,
-              now - verifiedAt <= 0.2, now - frameTime <= 1,
+              now - verifiedAt <= 0.2, now - frameTime <= visualContinuousSubmitMaximumFrameAge,
               self.revision == revision, snapshot.id == snapshotID, snapshot.identity == identity,
               snapshot.confirmed, !snapshot.readOnlyBackground, !snapshot.frame.idleConfirmed,
               snapshot.frame.completeSerial == serial, snapshot.frame.time == frameTime,
@@ -2442,7 +2448,7 @@ final class VisualDesktop {
         visibilitySource = nil; visibilityImage = nil; visibilityRegions = []
         let old = streams
         stream = nil; streams = []; frames = nil; identity = nil; selectedAXWindow = nil; snapshot = nil; content = nil; selectedInput = nil; searchActivation = nil
-        old.forEach { $0.stopCapture(completionHandler: nil) }
+        visualCaptureStop(old)
     }
 
     func selectedIdentity(_ target: Target) throws -> VisualIdentity {
@@ -2884,8 +2890,8 @@ final class VisualDesktop {
                 frame.captureEvidence?["blocked_system_surface_diagnostic"] = diagnostic
             }
             windowCaptureSerial=frame.completeSerial;latestWindowFrame=frame;return frame
-        } catch is VisualSearchObservationChanged { throw VisualSearchObservationChanged() }
-          catch is VisualNavigationHintObservationChanged { throw VisualNavigationHintObservationChanged() }
+        } catch let changed as VisualSearchObservationChanged { throw changed }
+          catch let changed as VisualNavigationHintObservationChanged { throw changed }
           catch var error as HelperError {
             if error.details["phase"] as? String == "matching_shareable_search_popup" {
                 error.details["search_transition_bound"] = searchTransition?.activation.identity == selected
@@ -3167,7 +3173,7 @@ final class VisualDesktop {
     }
 
     func ocrRegions(_ frame: VisualFrame, identity: VisualIdentity, regions: [CGRect],
-                    measurePerformance: Bool = false) throws -> (rows: [[String: Any]], regionRows: [[[String: Any]]], stageMS: [String: Double]) {
+                    measurePerformance: Bool = false, postEditComposerProof: Bool = false) throws -> (rows: [[String: Any]], regionRows: [[[String: Any]]], stageMS: [String: Double]) {
         let timing = measurePerformance ? VisualCaptureMetrics() : nil
         guard regions.allSatisfy({ visualContains(identity.frame, $0) }) else {
             throw fail("visual_region_outside_window", "Every OCR region must lie inside the selected window before any recognition starts")
@@ -3181,7 +3187,14 @@ final class VisualDesktop {
         let generation = ocrCacheGeneration
         ocrCacheLock.unlock()
         let sources = ocrRegionSources(frame, identity: identity, regions: regions, now: ProcessInfo.processInfo.systemUptime)
-        let jobs = regions.indices.filter { sources[$0] == $0 }
+        var jobs = regions.indices.filter { sources[$0] == $0 }
+        if postEditComposerProof, regions.count == 4, jobs == [0, 1, 2, 3] {
+            // Only the post-edit header/composer/security/Send batch uses this
+            // fixed packing: header then composer share a lane, while the two
+            // longer security and Send scans start independently. Results keep
+            // their original ROI indices; coverage, caching and joins are unchanged.
+            jobs = [0, 2, 3, 1]
+        }
         let colorProfile = OCRColorProfile(frame.image)
         timing?.mark("batch_prepare")
         let results = regions.map { _ in VisualCompletion<(rows: [[String: Any]], timing: [String: Double])>() }
@@ -4276,13 +4289,14 @@ final class VisualDesktop {
                             let window = old.identity.frame
                             let sendRegion = CGRect(x: window.minX + window.width * 0.70, y: window.minY + window.height * 0.85,
                                 width: window.width * 0.30, height: window.height * 0.15)
-                            // With a native operation binding, the short header
-                            // shares a lane with Send; composer/security each
-                            // keep their own complete ROI and worker lane.
+                            // A native operation binding includes the complete
+                            // padded security ROI. The post-edit packing pairs
+                            // header/composer; security and Send each have a lane.
                             let regions = nativeCommandScope != nil ?
                                 [visualSubmitHeader(window), verificationRegion, safetyRegion, sendRegion] :
                                 [verificationRegion, visualSubmitHeader(window), sendRegion]
-                            postEditProof = try ocrRegions(frame, identity: old.identity, regions: regions, measurePerformance: true)
+                            postEditProof = try ocrRegions(frame, identity: old.identity, regions: regions,
+                                measurePerformance: true, postEditComposerProof: nativeCommandScope != nil)
                             recordOCRStages("type_post_", postEditProof!.stageMS)
                         } else { postEditProof = nil }
                         let composerIndex = postEditProof?.regionRows.count == 4 ? 1 : 0
@@ -4420,7 +4434,7 @@ final class VisualDesktop {
                    visualContinuousSubmitRowsComplete([roiRows, prepared.headerRows, securityRows]),
                    let finished = inputDispatchFinished, finalFrame.time >= finished,
                    finalFrame.completeTime >= finalFrame.time, finalFrame.completeTime <= proofNow,
-                   proofNow - finalFrame.time <= 1, finalFrame.completeSerial > guardFrame.completeSerial,
+                   proofNow - finalFrame.time <= visualContinuousSubmitMaximumFrameAge, finalFrame.completeSerial > guardFrame.completeSerial,
                    finalFrame.searchOverlay == nil, finalFrame.searchQuery == nil,
                    visualCovered(safetyRegion, by: finalFrame.capturedRegions ?? []),
                    let revision = selectedInputRevision, revision == helper.monitor.interactionRevision,
@@ -4434,6 +4448,10 @@ final class VisualDesktop {
                         message: visualNormalizedText(expected), title: visualNormalizedText(title), revision: revision, securityVerified: true)
                 }
                 result["continuous_submit_proof_prepared"] = continuousSubmitProof != nil
+                result["continuous_submit_proof_preparation_frame_age_ms"] = (proofNow - finalFrame.time) * 1000
+                result["continuous_submit_proof_maximum_frame_age_ms"] = visualContinuousSubmitMaximumFrameAge * 1000
+                result["continuous_submit_proof_preparation_reason"] = continuousSubmitProof != nil ? "prepared" :
+                    (proofNow - finalFrame.time > visualContinuousSubmitMaximumFrameAge ? "frame_age_exceeded" : "strict_precondition_not_met")
                 actionStageMS["post_complete_edit_proof"] = (ProcessInfo.processInfo.systemUptime - proofStarted) * 1000
             }
             result.removeValue(forKey: "anchor_matches")
@@ -5161,7 +5179,10 @@ func visualContinuousSubmitSelfTests() -> [[String: Any]] {
     check("unknown_security_geometry_ineligible", !visualContinuousSubmitRowsComplete([[row], [row], [unknownRow]]))
     check("complete_immediate_type_proof_matches", accepts())
     check("complete_proof_expiry_denies", !accepts(now: 10.91))
-    check("frame_age_expiry_denies", !accepts(request, proof(verified: 11.01), now: 11.02))
+    check("post_input_1_4s_OCR_plus_11ms_bridge_reuses", accepts(request, proof(verified: 11.4), now: 11.411))
+    check("post_input_two_second_frame_boundary_reuses", accepts(request, proof(verified: 11.9), now: 12))
+    check("frame_age_expiry_denies", !accepts(request, proof(verified: 11.9), now: 12.001))
+    check("long_OCR_does_not_extend_verified_gap", !accepts(request, proof(verified: 11.4), now: 11.601))
     check("future_proof_denies", !accepts(now: 10.6))
     check("frame_must_follow_last_input_event", !accepts(request, proof(finished: 10.01)))
     check("unknown_security_denies", !accepts(request, proof(security: false)))

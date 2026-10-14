@@ -14,7 +14,7 @@ Native macOS desktop tools for Intel Macs, exposed through local stdio MCP. 面�
 
 ### 构建与配置
 
-需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。仓库不包含编译产物或额外 Python 依赖。在仓库根目录：
+需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。Git 仓库不包含编译产物或额外 Python 依赖；版本发布的 Intel 压缩包另附已编译 helper。预编译包见 [GitHub Releases](https://github.com/zhangqiang5204/intel-desktop/releases/tag/v0.1.72)。在仓库根目录：
 
 ```bash
 bash native/build.sh
@@ -35,25 +35,28 @@ python3 scripts/configure.py --format toml
 ```bash
 python3 scripts/run_tests.py
 python3 scripts/run_native_self_tests.py
-python3 scripts/run_capture_connection_tests.py --list
-# 以下命令仅在完成 native build 后运行纯 native 自测试：
-python3 scripts/run_native_self_tests.py
+python3 scripts/run_capture_connection_tests.py
 ```
 
 Python 测试使用 fake native 和临时 SQLite，不打开应用、不发送消息。依赖私有实机 UI 记录的用例未导出；可独立构造的相关场景使用合成 fixture。native 驱动只允许几何、精确选区、焦点 claim、submit guard、接管/dialog 逻辑和合成图像/window-snapshot 的无 GUI 自测试，不启动 live capture 或 live acceptance。实际权限、应用布局、多屏图像以及 UI 交接仍需单独实机验证。
 
-已有一次真实 Send A 和一次 Send B 验收：
+0.1.72 最终候选已通过真实微信发送、正文与空输入框确认、原窗口焦点归还；飞书相同发送路径也已完成真实发送与后台完整 AX 确认。下表均为单次实测，不是普遍性能保证：
 
-| 测量 | A | B |
-| --- | ---: | ---: |
-| Send 调用总耗时 | 10.22 s | 10.30 s |
-| 输入完成 → Return 事件 | 2.18 s | 2.08 s |
+| 测量 | 实测 |
+| --- | ---: |
+| 微信输入完成 → Return 事件 | 1.39 s |
+| 微信完整草稿校验完成 → Return 事件 | 54 ms |
+| 微信整个 Send 调用（含识别、接管提示、后台确认、归还） | 10.77 s |
+| 飞书完整草稿校验完成 → 提交调用 | 33 ms |
+| 飞书整个 Send 调用（含接管提示、完整确认、归还） | 3.05 s |
 
-这两个数据点不代表普遍性能保证。最新 continuous-input 候选尚未实机验收，不能宣称发送延迟已解决；TextEdit 对话框连续操作及切换前提示已按上方范围实机通过，其他应用仍需按真实结果判断。仓库不收录本机验收正文、原始日志、runtime 数据、用户配置或历史工作文件。
+微信已复用同次输入后取得的完整画面证明，避免发送前再做一轮截图；证明的窗口、草稿、焦点和时效检查仍保留。飞书提交后先归还原焦点，再后台确认；发送确认使用同一聊天正文下的完整 AX 值，可处理视口把文本裁成 1 点高的情况，侧栏预览和草稿不计入正文。菜单读取仅在实际导航需要时执行，菜单诊断失败不会污染聊天正文的完整性证明。
 
-截图流只在同一队列操作内复用。操作成功、失败或取消后，先等待本次流停止，再释放跨会话队列。两轮实机只读验收均确认：操作内 1 条流，结束后立即 0 条流；完整草稿和会话一致、无输入事件。60 秒空闲定时器仅作异常退出时的后备释放。冷启动若返回已观察到的 `-3805` 连接中断，只允许在原截止时间内重新核验目标后重建一次截图；不重试输入、超时或其他错误。已打开的旧 MCP 进程保留原先代码，新会话加载当前安装代码。
+非空选区实机验收使用 TextEdit 的精确第二次文字出现，UTF-16 选区、完整原文和原选区均回读并恢复，总耗时 746 ms。该选择实现未随版本号变化；TextEdit 对话框和切换前提示的实机范围见上文。其他应用或跨进程对话框仍需按真实结果判断。仓库不收录本机验收正文、原始日志、runtime 数据、用户配置或历史工作文件。
 
-飞书前台聊天流程在关闭已有搜索窗后沿用首次 claim，避免把原归还目标覆盖成飞书自身；业务结果未知仍只请求一次原生安全归还。业务完成但归还未证实时返回 `ok:false`、`scope_completed:false`，保留已验证草稿或 Send 证据，不重放。实机焦点验收覆盖正常返回、注入业务未知后的返回，均回到原应用确切窗口且无聊天输入；完整 MCP `read` 流程实测 2.33 秒、`focus_lifecycle:restored`。558 项 Python 回归、524 项原生纯检查及 7 项捕获连接故障注入检查通过。
+截图流只在同一队列操作内复用。操作成功、失败或取消后，先等待本次流停止，再释放跨会话队列。实际发送和后台只读验收均确认：结束后生命周期计数归零；最后的系统 Control Center 录屏归属更新为空。60 秒空闲定时器仅作异常退出时的后备释放。冷启动若返回已观察到的 `-3805` 连接中断，只允许在原截止时间内重新核验目标后重建一次截图；不重试输入、超时或其他错误。已打开的旧 MCP 进程保留原先代码，新会话加载当前安装代码。
+
+微信和飞书在已知提交后只请求一次安全归还，并仅后台确认；微信首次确认出现暂时不同的草稿外观时，在原 5 秒期限内只读复看一次，持续异常仍返回未知。飞书前台聊天流程在关闭已有搜索窗后沿用首次 claim，避免把原归还目标覆盖成飞书自身；业务结果未知仍只请求一次原生安全归还。业务完成但归还未证实时返回 `ok:false`、`scope_completed:false`，保留已验证草稿或 Send 证据，不重放。实机焦点验收覆盖正常返回、注入业务未知后的返回，均回到原应用确切窗口且无聊天输入；完整 MCP `read` 流程实测 2.33 秒、`focus_lifecycle:restored`。661 项 Python 回归、567 项原生纯检查及 7 项捕获连接故障注入检查通过。
 
 已有会话不会自动重新加载本地 Python 代码；当前 `desktop_status` 返回 `plugin_runtime_features`。旧连接缺少该元数据时，当前任务可以使用随包 `desktop_client.py` 打开新标准 MCP 连接，不能重放旧操作。微信系统录屏指示仍须独立核实；本 helper 的活跃流为零不能证明同一启动器下所有捕获都已结束。
 
@@ -63,14 +66,14 @@ Intel Desktop runs a persistent Swift helper behind a standard-library Python MC
 
 One queued batch, transaction or high-level workflow holds the FIFO across its steps. Current PID/window/geometry/value evidence, exact semantic selectors and takeover checks govern each action. Model-created scripts are collected as candidates; only a current-digest parameterized plan with real per-step and final postconditions can run. Registration, posted events and stale success flags never authorize replay. A Send needs current-human authorization for the exact recipient/content and fresh same-chat message-plus-empty-composer proof.
 
-Before foreground activation, a nonactivating handoff notice keeps the original focus for **1–2 seconds** and waits for typing to stop; continued input preserves that focus, and the same task does not repeat the notice. Reinspect every new dialog and prove its current AX relationship to the authorized window. A matching PID alone is insufficient; genuinely associated controls may have a remote PID. These additions have offline evidence only at this snapshot, pending native build and live acceptance.
+Before foreground activation, a nonactivating handoff notice keeps the original focus for **1–2 seconds** and waits for typing to stop; continued input preserves that focus, and the same task does not repeat the notice. Reinspect every new dialog and prove its current AX relationship to the authorized window. A matching PID alone is insufficient; genuinely associated controls may have a remote PID. TextEdit was live-tested through document → native Open window → fresh dialog inspection → Cancel → original document → saved focus return (4.63 seconds, including a 1.02-second pre-activation notice). Cross-process dialogs and other apps are outside that live proof.
 
-Build with `bash native/build.sh` on an Intel Mac running macOS 13 or newer, with Python 3.9+ and a suitable Xcode SDK. `scripts/configure.py` prints installation-specific JSON or Codex TOML without writing user settings. The plugin manifests use the documented `${PLUGIN_ROOT}` placeholder. Grant macOS permissions explicitly for the responsible program; this repository contains source, not a permission bypass or a prebuilt helper.
+Build with `bash native/build.sh` on an Intel Mac running macOS 13 or newer, with Python 3.9+ and a suitable Xcode SDK. `scripts/configure.py` prints installation-specific JSON or Codex TOML without writing user settings. The plugin manifests use the documented `${PLUGIN_ROOT}` placeholder. Grant macOS permissions explicitly for the responsible program; the Git repository contains source; the Intel release archive also includes the compiled helper.
 
 Run `python3 scripts/run_tests.py` for offline fake-backend regressions. After building, `python3 scripts/run_native_self_tests.py` runs only whitelisted non-GUI native guards. Live app acceptance remains separate. Background adapters are app/system dependent; the Feishu paste route temporarily uses and ownership-restores the clipboard.
 
 Runtime metadata separates queue/native/execution timings and measures complete workflow invocations. Script management calls are tool timings; historical script calls without action evidence remain unclassified. Explicit task totals use named same-task terminal operations from first recorded preflight to verified completion, including failed attempts and focus restoration. They do not include unmeasured earlier model/user time or unrelated history. Daily analysis reports coverage gaps and never optimizes code or executes scripts automatically.
 
-The measured Send A/B totals were **10.22/10.30 seconds**, with **2.18/2.08 seconds** from input completion to Return. The latest continuous-input candidate has not been live-tested. These observations are not a general latency guarantee or evidence that all apps, dialogs and handoffs pass. No local runtime, live message content, raw acceptance logs, credentials, personal configuration, historical workspace or compiled framework is included.
+The final WeChat live Send took **10.77 seconds** including recognition, takeover notice, verification and focus return. Input completion to Return was **1.39 seconds**, and complete draft proof to Return was **54 ms**; the continuous proof was actually reused. The Feishu live Send took **3.05 seconds**, with **33 ms** from complete draft proof to the submit call. Both sends passed fresh same-chat body and empty-composer confirmation, with focus returned. Nonempty TextEdit selection/readback/restoration took **746 ms**. These observations are not a general latency guarantee or evidence that all apps, dialogs and handoffs pass. No local runtime, live message content, raw acceptance logs, credentials, personal configuration, historical workspace or compiled framework is included.
 
 Source and relocated offline-test provenance is recorded in [SOURCE_MANIFEST.json](SOURCE_MANIFEST.json). Licensed under [MIT](LICENSE), copyright zhangqiang5204.

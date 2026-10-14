@@ -12,12 +12,25 @@ from unittest.mock import patch
 
 from daily_analysis import analyze, safe_metadata
 from task_runtime import TaskRuntime, operation_duration, WORKFLOW_DURATION_BASIS, TASK_DURATION_BASIS
-from workflow_tools import task_action
+from workflow_tools import classify_result, task_action
 
 
 TASK = "task-total-fixture"
 PRIVATE = "PRIVATE BODY PARAMETER CREDENTIAL MUST NOT BE LOGGED"
 BASE = datetime(2026, 10, 14, 1, tzinfo=timezone.utc).timestamp()
+
+
+def verified_send():
+    return {"ok": True, "result": {
+        "sent": True, "send_verified": True, "submission_state": "observed_in_chat",
+        "draft_empty": True, "recipient_verified": True, "foreground_preserved": True,
+        "send_verification_source": "fresh_same_chat_empty_composer_and_increased_complete_exact_text_row_occurrence",
+    }}
+
+
+def verified_selection():
+    return {"ok": True, "result": {"selection_verified": True, "value_verified": True,
+                                    "text_unchanged": True, "system_focus_preserved": True}}
 
 
 class Clock:
@@ -42,13 +55,13 @@ class TaskTotalTests(unittest.TestCase):
         self.runtime.close()
         self.temp.cleanup()
 
-    def operation(self, identifier, *, state="verified", tool="desktop_chat", task=TASK, seconds=1, native=None, action=None):
+    def operation(self, identifier, *, state="verified", tool="desktop_chat", task=TASK, seconds=1, native=None, action=None, flags=None):
         def executor(context):
             if native is not None:
                 context.record_native(native, substage="batch")
                 context.record_native(native, substage="same_response_no_replay")
             self.clock.advance(seconds)
-            context.set_outcome(state, verified_flags={"proof_full_value": state == "verified", "proof_same_target": state == "verified", "focus_verified": state == "verified"},
+            context.set_outcome(state, verified_flags=flags if flags is not None else {"proof_full_value": state == "verified", "proof_same_target": state == "verified", "focus_verified": state == "verified"},
                                 error_code=None if state == "verified" else "fixture_failed")
             return {"ok": state == "verified", "result": {"text": PRIVATE, "verified": state == "verified"}}
 
@@ -59,8 +72,21 @@ class TaskTotalTests(unittest.TestCase):
             return self.runtime.run(tool, args, executor,
                                     task_id=task, operation_id=identifier)
 
-    def completion(self, references, final, *, unit="unit-fixture"):
-        return self.runtime.record_task_completion(TASK, unit, "send_selection_acceptance", references, final)
+    def completion(self, references, final, *, unit="unit-fixture", purpose="maintenance_acceptance"):
+        return self.runtime.record_task_completion(TASK, unit, purpose, references, final)
+
+    def classified_operation(self, identifier, command, response, *, action=None, seconds=1):
+        args = {"app": "com.apple.TextEdit", "text": PRIVATE}
+        if action is not None:
+            args["action"] = action
+
+        def executor(context):
+            self.clock.advance(seconds)
+            classify_result(command, args, response, context)
+            return response
+
+        with patch("task_runtime.time.time", side_effect=self.clock), patch("task_runtime.time.monotonic", side_effect=self.clock):
+            return self.runtime.run("desktop_" + command, args, executor, task_id=TASK, operation_id=identifier)["summary"]
 
     def sql(self, statement, values=()):
         with closing(sqlite3.connect(self.runtime.database)) as database, database:
@@ -245,9 +271,10 @@ class TaskTotalTests(unittest.TestCase):
         self.clock.advance(.5)
         self.operation("failed-kind", state="failed", seconds=.7)
         self.operation("unknown-attempt", state="unknown", seconds=.3)
-        self.operation("final-send", seconds=.5)
+        self.classified_operation("final-send", "chat", verified_send(), action="send", seconds=.5)
         finished = self.runtime.get_operation("final-send")["finished"]
-        unit = self.completion(["preflight", "failed-search", "failed-kind", "unknown-attempt", "final-send"], "final-send")
+        unit = self.completion(["preflight", "failed-search", "failed-kind", "unknown-attempt", "final-send"], "final-send",
+                               purpose="chat_send_acceptance")
         self.assertEqual(unit["created"], BASE)
         self.assertEqual(unit["finished"], finished)
         self.assertEqual(unit["total_duration_ms"], round((finished - BASE) * 1000, 3))
@@ -257,6 +284,116 @@ class TaskTotalTests(unittest.TestCase):
         self.assertEqual(unit["attempt_outcomes"]["failed"], 2)
         self.assertEqual(unit["verified_operation_id"], "final-send")
         self.assertFalse(unit["normality_assessed"])
+
+    def test_unknown_send_followed_by_selection_or_draft_is_not_send_acceptance(self):
+        for kind, command, action, response in (
+            ("selection", "select_text", None, verified_selection()),
+            ("draft", "chat", "draft", {"ok": True, "result": {
+                "draft_verified": True, "recipient_verified": True, "foreground_preserved": True}}),
+        ):
+            with self.subTest(kind=kind):
+                unknown = "unknown-" + kind
+                endpoint = "endpoint-" + kind
+                failed_response = verified_send()
+                failed_response.update(ok=False, completion_unknown=True, error={"code": "background_postcondition_unknown"})
+                self.classified_operation(unknown, "chat", failed_response, action="send")
+                summary = self.classified_operation(endpoint, command, response, action=action)
+                self.assertEqual(summary["state"], "verified")
+                self.assertNotIn("proof_chat_send", summary["verified_flags"])
+                for purpose in ("chat_send_acceptance", "send_selection_acceptance"):
+                    with self.subTest(purpose=purpose), self.assertRaisesRegex(ValueError, "business postconditions"):
+                        self.completion([unknown, endpoint], endpoint, purpose=purpose, unit=kind + "-send")
+                maintenance = self.completion([unknown, endpoint], endpoint, unit=kind + "-maintenance")
+                self.assertEqual(maintenance["unknown_attempts"], 1)
+                self.assertEqual(self.runtime.get_operation(unknown)["state"], "unknown")
+                self.assertNotIn("proof_chat_send", self.runtime.get_operation(unknown)["verified_flags"])
+
+    def test_purpose_requires_matching_endpoint_and_both_proofs_for_send_selection(self):
+        send = self.classified_operation("strict-send", "chat", verified_send(), action="send")
+        self.assertTrue(send["verified_flags"]["proof_chat_send"])
+        self.completion(["strict-send"], "strict-send", purpose="chat_send_acceptance", unit="send")
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["strict-send"], "strict-send", purpose="send_selection_acceptance")
+
+        selection = self.classified_operation("strict-selection", "select_text", verified_selection())
+        self.assertTrue(selection["verified_flags"]["proof_text_selection"])
+        self.completion(["strict-selection"], "strict-selection", purpose="text_selection_acceptance", unit="selection")
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["strict-selection"], "strict-selection", purpose="send_selection_acceptance")
+        combined = self.completion(["strict-send", "strict-selection"], "strict-selection",
+                                   purpose="send_selection_acceptance", unit="send-then-selection")
+        self.assertEqual(combined["operation_ids"], ["strict-send", "strict-selection"])
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["strict-send", "strict-selection"], "strict-selection", purpose="chat_send_acceptance")
+
+        self.classified_operation("later-send", "chat", verified_send(), action="send")
+        self.completion(["strict-selection", "later-send"], "later-send",
+                        purpose="send_selection_acceptance", unit="selection-then-send")
+        self.operation("generic-end")
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["strict-send", "strict-selection", "generic-end"], "generic-end", purpose="send_selection_acceptance")
+
+    def test_unknown_send_with_stale_proof_cannot_supply_combined_acceptance(self):
+        self.classified_operation("stale-send-proof", "chat", verified_send(), action="send")
+        self.sql("UPDATE operations SET state='unknown' WHERE operation_id='stale-send-proof'")
+        self.classified_operation("selection", "select_text", verified_selection())
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["stale-send-proof", "selection"], "selection", purpose="send_selection_acceptance")
+        self.assertEqual(self.runtime.get_operation("stale-send-proof")["state"], "unknown")
+
+    def test_generic_focus_capture_and_value_flags_cannot_substitute_for_send_proof(self):
+        for flag in ("focus_verified", "capture_scope_released", "value_verified", "recipient_verified", "draft_verified", "business_completed"):
+            with self.subTest(flag=flag):
+                identifier = "generic-" + flag
+                self.operation(identifier, flags={flag: True})
+                with self.assertRaisesRegex(ValueError, "business postconditions"):
+                    self.completion([identifier], identifier, purpose="chat_send_acceptance", unit=flag + "-send")
+                self.completion([identifier], identifier, unit=flag + "-maintenance")
+
+    def test_send_business_proof_without_completed_focus_scope_cannot_complete_a_unit(self):
+        for lifecycle, expected in (("unverified", "accepted_unverified"), ("yielded_to_user", "verified")):
+            with self.subTest(lifecycle=lifecycle):
+                response = verified_send()
+                response.update(focus_lifecycle=lifecycle, focus_return_required=True,
+                                business_completed=True, scope_completed=lifecycle == "yielded_to_user")
+                identifier = "send-scope-" + lifecycle
+                summary = self.classified_operation(identifier, "chat", response, action="send")
+                self.assertEqual(summary["state"], expected)
+                self.assertTrue(summary["verified_flags"]["proof_chat_send"])
+                if expected == "verified":
+                    self.completion([identifier], identifier, purpose="chat_send_acceptance", unit=lifecycle)
+                else:
+                    with self.assertRaisesRegex(ValueError, "runtime verified postconditions"):
+                        self.completion([identifier], identifier, purpose="chat_send_acceptance", unit=lifecycle)
+
+    def test_late_verified_readonly_confirmation_remains_valid_for_maintenance(self):
+        self.operation("unknown-send", state="unknown")
+        self.clock.advance(2)
+        self.operation("late-confirmation", tool="desktop_observe")
+        unit = self.completion(["unknown-send", "late-confirmation"], "late-confirmation")
+        self.assertEqual(unit["total_duration_ms"], 4000)
+        self.assertEqual(unit["unknown_attempts"], 1)
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["unknown-send", "late-confirmation"], "late-confirmation", purpose="chat_send_acceptance", unit="send")
+        self.assertEqual(self.runtime.get_operation("unknown-send")["state"], "unknown")
+
+    def test_saved_legacy_completion_is_preserved_but_does_not_create_business_proof(self):
+        self.operation("legacy-end")
+        legacy = self.completion(["legacy-end"], "legacy-end")
+        legacy.pop("recorded")
+        legacy["purpose"] = "chat_send_acceptance"
+        self.sql("UPDATE operations SET timing_json=? WHERE operation_id='legacy-end'",
+                 (json.dumps({"task_completions": [legacy]}),))
+        replay = self.completion(["legacy-end"], "legacy-end", purpose="chat_send_acceptance")
+        self.assertEqual(replay, {**legacy, "recorded": False})
+        with self.assertRaisesRegex(ValueError, "business postconditions"):
+            self.completion(["legacy-end"], "legacy-end", purpose="chat_send_acceptance", unit="new-unit")
+        saved = self.runtime.get_operation("legacy-end")
+        self.assertEqual(saved["timing"]["task_completions"], [legacy])
+        self.assertNotIn("proof_chat_send", saved["verified_flags"])
+        report = analyze(self.directory, "2026-10-14", "UTC", write=False)
+        self.assertEqual(report["task_totals"]["completed_task_units"]["count"], 1)
+        self.assertEqual(report["task_totals"]["completed_task_units"]["invalid_or_incomplete_records"], 0)
 
     def test_completion_record_time_is_not_added_to_the_real_end_time(self):
         self.operation("begin", state="completed", tool="desktop_status")

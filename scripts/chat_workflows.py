@@ -26,7 +26,7 @@ WECHAT_SEARCH_LOCAL = {"联系人", "好友", "群聊", "群组", "AI助手", "�
 WECHAT_SEARCH_EXCLUDED = {"搜索网络结果", "网络结果", "聊天记录", "搜索聊天记录"}
 CHAT_TOOL = {
     "name": "desktop_chat",
-    "description": "Use action=observe for read-only background state and optional masked MCP images without focus/navigation. Locate a unique personal/group chat, observe visible replies/history, draft or clear exact owned text, remove an exact authorized WeChat draft prefix while preserving its suffix, or send one exact message already authorized by the current human. send_authorization asserts existing current-human authorization for this exact app/recipient/content; the tool does not grant it. Stops on changed drafts, ambiguity, errors or takeover, never replays. History is bounded visible UI text, never database history.",
+    "description": "Use action=observe for read-only background state and optional masked MCP images without focus/navigation. Locate a unique personal/group chat, observe visible replies/history, draft or clear exact owned text, remove an exact authorized WeChat draft prefix while preserving its suffix, or send one exact message already authorized by the current human. When exact sending is authorized and content is final, use one action=send to locate, write, submit once, verify and return focus; split draft only for review or a business pause. send_authorization asserts existing current-human authorization for this exact app/recipient/content; the tool does not grant it. Stops on changed drafts, ambiguity, errors or takeover, never replays. History is bounded visible UI text, never database history.",
     "inputSchema": {"type": "object", "properties": {
         "app": {"type": "string", "enum": sorted(APPS)},
         "action": {"type": "string", "enum": sorted(ACTIONS | {"observe"})},
@@ -47,7 +47,7 @@ CHAT_TOOL = {
         "reply_contains": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Optional text to observe in the visible message area. Presence alone does not establish sender or a new reply."},
         "baseline_text": {"type": "string", "maxLength": 16000, "description": "Prior visible_text for this same chat. Observe normalized visible changes and their text; changed visibility alone does not establish a new message or sender."},
         "previous_visible_text": {"type": "string", "maxLength": 16000, "description": "Alias of baseline_text."},
-        "wait_timeout_ms": {"type": "integer", "minimum": 0, "maximum": 60000, "description": "Bounded read-only reply/change observation (read default 0), or send UI confirmation (default 5000)."},
+        "wait_timeout_ms": {"type": "integer", "minimum": 0, "maximum": 60000, "default": 0, "description": "Optional read-only reply/change observation, default 0 for read and send. For send this runs after the sent message is verified; it does not delay Return. Separate send UI confirmation waits up to 5000 ms after submission and returns as soon as full proof arrives."},
         "send_authorization": {"type": "object", "properties": {"source": {"type": "string", "enum": ["current_user"]}, "app": {"type": "string", "enum": sorted(APPS)}, "chat": {"type": "string", "minLength": 1, "maxLength": 128}, "text": {"type": "string", "minLength": 1, "maxLength": 4096}}, "required": ["source", "app", "chat", "text"], "additionalProperties": False,
                                "description": "Caller assertion of the current human's existing exact send authorization; must match app/chat/text byte-for-byte. Never supply this for draft tests or merely inferred authority."},
     }, "required": ["app", "action"], "additionalProperties": False},
@@ -59,6 +59,22 @@ class Stopped(Exception):
     def __init__(self, code, message, details=None):
         super().__init__(message)
         self.code, self.details = code, details or {}
+
+
+def _feishu_search_open_control_allowed(row):
+    """Match the native owned-search predicate, including the observed fullwidth plus."""
+    role = row.get("role")
+    if role == "AXMenuItem":
+        return row.get("title") == "搜索"
+    if role != "AXButton":
+        return False
+    for key in ("title", "description"):
+        label = row.get(key)
+        if isinstance(label, str):
+            normalized = "".join(c for c in label if not c.isspace()).replace("（", "(").replace("）", ")")
+            if normalized in {"搜索", "搜索(⌘K)", "搜索(⌘＋K)"}:
+                return True
+    return False
 
 
 def _norm(value):
@@ -353,18 +369,24 @@ def _focus_receipt(value):
     elif isinstance(diagnostic, dict):
         bounded = {}
         for key, allowed in {
-            "candidate_reason": {"claim_unavailable", "main_AX_identity_unavailable", "main_PID_mismatch", "main_CG_identity_ambiguous_or_unavailable", "bound"},
-            "adoption_reason": {"candidate_unavailable", "input_monitor_interrupted_or_unavailable", "task_identity_mismatch", "post_navigation_proof_incomplete", "verified_owned_modal_to_main"},
+            "navigation_kind": {"main_to_search", "search_to_main"},
+            "current_AXMainWindow_kind": {"saved_main", "known_search_modal", "other", "missing"},
+            "current_AXFocusedWindow_kind": {"saved_main", "known_search_modal", "other", "missing"},
+            "search_control_role": {"AXMenuItem", "AXButton", "other", "missing"},
+            "accepted_navigation": {"exact_search_AXPress", "plain_search_modal_escape"},
+            "candidate_reason": {"claim_unavailable", "main_AX_identity_unavailable", "main_PID_mismatch", "main_or_modal_AX_window_mismatch", "main_CG_identity_ambiguous_or_unavailable", "search_control_not_exact", "existing_search_modal", "bound"},
+            "adoption_reason": {"candidate_unavailable", "candidate_not_retained", "input_monitor_interrupted_or_unavailable", "task_identity_mismatch", "main_AX_identity_unavailable", "AX_main_window_mismatch", "main_CG_identity_ambiguous_or_unavailable", "main_identity_verified", "claimed_main_window_mismatch", "unique_focused_modal_unavailable", "selected_modal_mismatch", "modal_PID_or_security_mismatch", "post_navigation_proof_incomplete", "verified_owned_modal_to_main", "verified_owned_main_to_modal"},
         }.items():
             if isinstance(diagnostic.get(key), str) and diagnostic[key] in allowed:
                 bounded[key] = diagnostic[key]
-        for key in ("candidate_available", "action_accepted", "claim_available", "claim_complete", "monitor_available", "interrupted",
-                    "claimed_window_matches_selected", "claimed_PID_matches_selected", "claimed_topology_matches", "claim_bound_to_modal",
+        for key in ("candidate_available", "candidate_retained", "action_accepted", "claim_available", "claim_complete", "monitor_available", "interrupted",
+                    "claimed_window_matches_selected", "claimed_window_still_focused", "claimed_PID_matches_selected", "claimed_topology_matches", "claim_bound_to_modal",
+                    "claimed_task_matches", "claimed_operation_matches", "activity_revision_matches", "candidate_within_deadline", "search_control_allowed",
                     "main_matches_AXMainWindow", "modal_matches_AXFocusedWindow", "same_frame_CG_rows_truncated", "AX_main_identity_unchanged",
                     "CG_main_identity_unchanged", "modal_absent", "target_frontmost", "actual_AXMainWindow_matches", "actual_AXFocusedWindow_matches", "topology_matches"):
             if type(diagnostic.get(key)) is bool:
                 bounded[key] = diagnostic[key]
-        for key, low, high in (("target_pid", 1, 2**31 - 1), ("main_AX_match_count", 0, 10000), ("same_frame_CG_count", 0, 10000),
+        for key, low, high in (("target_pid", 1, 2**31 - 1), ("main_AX_match_count", 0, 10000), ("same_frame_CG_count", 0, 10000), ("search_modal_count", 0, 10000),
                                ("main_CG_window_id", 1, 2**32 - 1), ("current_main_CG_window_id", 1, 2**32 - 1)):
             if type(diagnostic.get(key)) is int and low <= diagnostic[key] <= high:
                 bounded[key] = diagnostic[key]
@@ -436,8 +458,19 @@ class ChatSession:
         self.submit_posted = False
         self.send_verified = False
         self.send_focus_reused = False
+        self.wechat_submit_focus_receipt = None
+        self.wechat_confirmation_identity = None
+        self.wechat_pre_input_draft_change_call = None
         self.edited_value = None
         self.edited_input_receipt = None
+        self.feishu_edit_proof = None
+        self.feishu_send_proof_reused = False
+        self.feishu_send_points = {"invocation_started": time.perf_counter()} if self.app == FEISHU else {}
+        self.feishu_confirmation_reads = 0
+        self.feishu_confirmation_baseline = None
+        self.feishu_confirmation_observations = []
+        self.feishu_submit_focus_receipt = None
+        self.feishu_phase_log_complete = None
         self.focus_attempted = False
         self.focus_claim_verified = False
         self.focus_claim_receipt = {}
@@ -516,6 +549,10 @@ class ChatSession:
         return value
 
     def finish_focus(self, error=None):
+        if self.wechat_submit_focus_receipt is not None:
+            return dict(self.wechat_submit_focus_receipt)
+        if self.feishu_submit_focus_receipt is not None:
+            return dict(self.feishu_submit_focus_receipt)
         if not self.focus_attempted:
             return {}
         # Uncertain business input never authorizes replay or cleanup. It also
@@ -524,6 +561,16 @@ class ChatSession:
         # still safe to restore.
         guarded_feishu_return = self.app == FEISHU
         details = error.details if error and isinstance(error.details, dict) else {}
+        # A successful composer click can return OCR differing from the prior
+        # draft before any text/delete/Return was attempted. Preserve that
+        # failure, but let native ownership and takeover guards decide one
+        # origin return. Native error flags cannot create this local boundary.
+        guarded_wechat_pre_input_return = (self.app == WECHAT and error is not None and error.code == "draft_changed"
+            and self.focus_claim_verified and not self.submit_started and details.get("input_may_be_partial") is not True
+            and type(self.wechat_pre_input_draft_change_call) is int
+            and self.wechat_pre_input_draft_change_call == len(self.calls))
+        if guarded_wechat_pre_input_return:
+            self.wechat_pre_input_draft_change_call = None  # Consume this boundary once.
         clear_stop = self.clear_recovery.get("stop_code") if self.clear_recovery else None
         if error and clear_stop in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed"}:
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": clear_stop}
@@ -535,7 +582,7 @@ class ChatSession:
                                        "navigation_identity_unverified", "navigation_focus_unverified"}:
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": recovery_stop}
         if error and (error.code in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed"}
-                      or error.code == "draft_changed" and not guarded_feishu_return
+                      or error.code == "draft_changed" and not (guarded_feishu_return or guarded_wechat_pre_input_return)
                       or error.code == "visual_target_changed" and details.get("navigation_only") is not True and details.get("safe_origin_restore") is not True):
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": error.code}
         unknown = {"native_transport_error", "native_protocol_error", "operation_completion_unknown", "send_state_unknown", "draft_unverified", "clear_unverified", "prefix_clear_unverified"}
@@ -572,8 +619,10 @@ class ChatSession:
             raise Stopped("foreground_mismatch", "The chat application lost foreground focus; no focus recovery or replay")
         return state
 
-    def inspect(self, all_windows=False):
-        args = {"max_depth": 40, "max_nodes": 2000, "include_menus": self.app == FEISHU}
+    def inspect(self, all_windows=False, *, include_menus=None):
+        # App-menu diagnostics are independent of the actual chat AX tree.
+        # Acquire them only for a search route that lacks an exact chat button.
+        args = {"max_depth": 40, "max_nodes": 2000, "include_menus": False if include_menus is None else include_menus}
         if all_windows:
             args["window_title"] = None
         # Omit None rather than invoking a wrapper with an invalid title.
@@ -694,9 +743,25 @@ class ChatSession:
         # 1x/2x long-group captures. Right toolbar icons start much farther
         # right (+726/+810pt); OCR text in that column is not a chat title.
         # Keep the entire left-aligned row, including every suffix character.
-        return [row for row in self.wechat_control_evidence(value)
+        rows = [row for row in self.wechat_control_evidence(value)
                 if _inside(row, region) and self.frame["x"] + 326 <= _rect(row)["x"] <= self.frame["x"] + 360
                 and _norm(_text(row)) not in {"", "AI", "搜索", "发送"}]
+        # This observed housekeeper status occupies a separate smaller line
+        # below its known title. Never choose a generic first row or discard
+        # the same literal when it is itself an independent chat title.
+        if len(rows) == 2 and value.get("ocr_truncated") is False:
+            primary = [row for row in rows if _norm(_text(row)) in {"管家", "管家AI"}]
+            status = [row for row in rows if _norm(_text(row)) == "暂无法连接OpenClaw"]
+            if len(primary) == len(status) == 1:
+                title_box, status_box = _rect(primary[0]), _rect(status[0])
+                middle = region["y"] + region["height"] / 2
+                gap = status_box["y"] - title_box["y"] - title_box["height"]
+                if (region["y"] <= title_box["y"] and title_box["y"] + title_box["height"] <= middle
+                        and middle <= status_box["y"] and status_box["y"] + status_box["height"] <= region["y"] + region["height"]
+                        and 2 <= gap <= 12 and abs(title_box["x"] - status_box["x"]) <= 2
+                        and status_box["height"] <= title_box["height"] and status_box["width"] > title_box["width"]):
+                    return primary
+        return rows
 
     def wechat_header(self, value, wanted=None):
         rows = self.wechat_header_rows(value)
@@ -949,6 +1014,56 @@ class ChatSession:
                     or not self.wechat_complete_composer_capture(value)):
                 raise Stopped("recent_read_incomplete", "The complete recent list and current composer are not covered by this same frame; no navigation")
         value["recent_scope_read"] = include_recent and value.get("ocr_truncated") is False
+        return value
+
+    def wechat_return_after_submit(self, submitted, before_submit):
+        # Both native submit flags have already been verified. Preserve this
+        # exact window binding, then consume the saved origin return once.
+        # A posted Return never authorizes another input or focus claim.
+        keys = ("target_pid", "window_id", "display_topology_signature")
+        self.wechat_confirmation_identity = {key: submitted.get(key) for key in keys}
+        try:
+            same_frame = _rect(submitted) == self.frame
+        except Stopped:
+            same_frame = False
+        self.wechat_confirmation_identity["submission_binding_verified"] = (
+            submitted.get("target_pid") == self.pid and same_frame
+            and all(type(submitted.get(key)) is type(before_submit.get(key))
+                    and submitted.get(key) == before_submit.get(key) for key in keys))
+        try:
+            self.wechat_submit_focus_receipt = self.finish_focus()
+        except Exception as failure:
+            self.wechat_submit_focus_receipt = {"focus_restored": False,
+                "focus_restore_requested": self.focus_restore_requested, "focus_restore_attempted": None,
+                "restore_reason": "focus_finalization_unknown",
+                "focus_finalization_exception_type": type(failure).__name__}
+
+    def wechat_send_confirmation_read(self):
+        binding = self.wechat_confirmation_identity or {}
+        if (binding.get("submission_binding_verified") is not True
+                or type(binding.get("target_pid")) is not int or binding["target_pid"] <= 0
+                or type(binding.get("window_id")) is not int or binding["window_id"] <= 0
+                or not isinstance(binding.get("display_topology_signature"), str)
+                or not binding["display_topology_signature"]):
+            raise Stopped("send_state_unknown", "The submitted window binding is incomplete; no foreground recovery or replay")
+        regions = self.wechat_regions()
+        requested = [regions[key] for key in ("header", "send", "composer", "body")]
+        value = self.visual_identity(self.call("background_visual_read", regions=requested,
+            anchor_texts=[self.title, "发送"], confirm_target=True, anchor_wait_timeout_ms=0, max_text_rows=100))
+        if any(value.get(key) != binding[key] for key in ("target_pid", "window_id", "display_topology_signature")):
+            raise Stopped("visual_target_changed", "The submitted window identity changed during background confirmation")
+        if (value.get("read_only_background") is not True or value.get("input_eligible") is not False
+                or value.get("target_identity_verified") is not True or value.get("content_available") is not True):
+            raise Stopped("send_state_unknown", "Current read-only target identity and content are unverified")
+        from desktop_observation import _covered
+        if (value.get("ocr_truncated") is not False
+                or any(not _covered(region, value.get("captured_regions"))
+                       or not _covered(region, value.get("ocr_regions")) for region in requested)
+                or not self.wechat_complete_composer_capture(value)):
+            raise Stopped("send_state_unknown", "Complete same-frame header, body and composer are unavailable in background confirmation")
+        self.wechat_header(value, self.title)
+        if not self.wechat_has_send(value):
+            raise Stopped("send_state_unknown", "Current composer Send control is unavailable; no foreground recovery")
         return value
 
     def visual_args(self, value, kind, region):
@@ -1585,6 +1700,7 @@ class ChatSession:
         # The click's fresh OCR is the last pre-input evidence. Reads would reset
         # native visual input focus, so consume this post-click snapshot directly.
         if self.wechat_draft(clicked) != before:
+            self.wechat_pre_input_draft_change_call = len(self.calls)
             raise Stopped("draft_changed", "The composer changed before editing; no text/delete events")
         args = self.visual_args(clicked, "chat_composer", region)
         if action == "draft":
@@ -1635,7 +1751,8 @@ class ChatSession:
         self.edited_value = final
         if action == "draft":
             self.edited_input_receipt = {key: changed.get(key) for key in
-                ("input_event_timing", "events_posted", "value_verified", "target_pid", "window_id", "display_topology_signature")}
+                ("input_event_timing", "events_posted", "value_verified", "target_pid", "window_id", "display_topology_signature",
+                 "continuous_submit_proof_prepared")}
         return {"draft_empty": not expected, "draft_verified": True, "draft": expected, "sent": False}
 
     def wechat_clear_prefix(self, value):
@@ -1676,14 +1793,147 @@ class ChatSession:
             rows.append(focused)
         return [r for r in rows if not r.get("secure")]
 
-    def feishu_read(self):
+    def feishu_read(self, *, include_menus=False):
         self.status(strict=True)
-        tree = self.inspect()
+        tree = self.inspect(include_menus=include_menus)
         window = _unique([w for w in tree["windows"] if w.get("title") == self.target["window_title"]], "Selected AX window is unavailable")
         if _rect(window) != self.frame:
             raise Stopped("target_geometry_changed", "Window geometry changed during this chat workflow")
         self.status(strict=True)
         return tree
+
+    def feishu_send_confirmation_read(self):
+        # Return has already been posted and the one guarded focus return has
+        # finished. Reading AX never reacquires foreground or starts input.
+        tree = self.inspect(include_menus=False)
+        if type(tree.get("target_pid")) is not int or tree["target_pid"] != self.pid:
+            raise Stopped("target_changed", "Background send observation lost the same application PID; no replay")
+        window = _unique([w for w in tree["windows"] if w.get("title") == self.target["window_title"]], "Selected AX window is unavailable")
+        if _rect(window) != self.frame:
+            raise Stopped("target_geometry_changed", "Window geometry changed during background send observation")
+        composer = self.feishu_composer(tree)
+        if (tree.get("truncated") is not False or composer.get("value_complete") is not True
+                or composer.get("value_truncated") is not False or self.feishu_chat_area(tree) is None):
+            raise Stopped("send_state_unknown", "Complete current AX chat and composer are unavailable after submission; no replay")
+        self.feishu_header(tree, self.title)
+        return tree
+
+    def feishu_complete_body_occurrences(self, tree, text, rows):
+        originals = {row["element_id"]: row for row in self.feishu_elements(tree)}
+        count = 0
+        for row in rows:
+            original = originals[row["element_id"]]
+            if _norm(row["text"]) != _norm(text):
+                continue
+            # Native value strings can be capped. An exact capped prefix is
+            # not a complete message; positive completeness is required.
+            if isinstance(original.get("value"), str) and original["value"].strip():
+                if original.get("value_complete") is not True or original.get("value_truncated") is not False:
+                    continue
+            count += 1
+        return count
+
+    def feishu_full_ax_body_proof(self, tree, text):
+        """Complete app AX values can survive viewport clipping to one point.
+
+        This is Send's symmetric before/after counter, not visible history or
+        a message count. Require the actual chat ancestry and a body-contained
+        container; a sidebar preview or a complete composer value cannot count.
+        """
+        if (tree.get("truncated") is not False or type(tree.get("target_pid")) is not int
+                or tree["target_pid"] != self.pid):
+            raise Stopped("send_state_unknown", "Complete same-PID AX is required for the send baseline and outcome")
+        window = _unique([w for w in tree.get("windows", []) if w.get("title") == self.target["window_title"]],
+                         "The same send window is unavailable")
+        if _rect(window) != self.frame:
+            raise Stopped("target_geometry_changed", "Send AX window geometry changed; no replay")
+        rows = self.feishu_elements(tree)
+        by_id = {row.get("element_id"): row for row in rows if row.get("element_id")}
+        if len(by_id) != len(rows):
+            raise Stopped("send_state_unknown", "AX node identities are incomplete or duplicated")
+        area = self.feishu_chat_area(tree)
+        if area is None:
+            raise Stopped("send_state_unknown", "The unique messenger-chat ancestry is unavailable")
+        composer = self.feishu_composer(tree)
+        body, area_rect = self.feishu_body_region(tree), _rect(area)
+
+        def chain(row):
+            result, seen = [], set()
+            for _ in range(41):
+                key = row.get("parent_id")
+                if not key:
+                    return result
+                if key in seen or key not in by_id:
+                    raise Stopped("send_state_unknown", "AX ancestry is incomplete or cyclic")
+                seen.add(key); row = by_id[key]; result.append(row)
+            raise Stopped("send_state_unknown", "AX ancestry exceeded the complete inspection depth")
+
+        def contains(outer, inner):
+            return (outer["x"] <= inner["x"] and outer["y"] <= inner["y"]
+                    and inner["x"] + inner["width"] <= outer["x"] + outer["width"]
+                    and inner["y"] + inner["height"] <= outer["y"] + outer["height"])
+
+        composer_chain = chain(composer)
+        if (area not in composer_chain or composer.get("element_pid") != self.pid
+                or composer.get("value_complete") is not True or composer.get("value_truncated") is not False
+                or not contains(area_rect, _rect(composer))):
+            raise Stopped("send_state_unknown", "The complete composer is not bound to the actual messenger-chat")
+        header_band = {**area_rect, "width": area_rect["width"] * .67, "height": min(56, area_rect["height"])}
+        headers = [row for row in rows if row.get("role") == "AXStaticText" and row.get("element_pid") == self.pid
+                   and _norm(_text(row)) == _norm(self.title) and _inside(row, header_band)
+                   and _rect(row)["height"] > 2 and _rect(row)["width"] > 2 and area in chain(row)]
+        header = _unique(headers, "The actual same-chat AX header is unavailable for send proof")
+        if header.get("value_complete") is not True or header.get("value_truncated") is not False:
+            raise Stopped("send_state_unknown", "The actual chat header lacks complete AX value proof")
+        if not _label_matches(self.feishu_header(tree, self.title), self.title):
+            raise Stopped("recipient_mismatch", "The complete composer and header no longer name the same chat")
+        found, clipped = set(), 0
+        for row in rows:
+            if (row.get("role") != "AXStaticText" or not isinstance(row.get("value"), str)
+                    or _norm(row["value"]) != _norm(text) or row is header):
+                continue
+            parents = chain(row)
+            if area not in parents or composer in parents or row.get("element_pid") != self.pid:
+                continue
+            if any(parent.get("element_pid") != self.pid for parent in parents[:parents.index(area) + 1]):
+                continue
+            # A same-chat exact-but-incomplete value cannot establish an absent
+            # baseline either. Refuse before input as well as after posting.
+            if row.get("value_complete") is not True or row.get("value_truncated") is not False:
+                raise Stopped("send_state_unknown", "An exact AX body candidate lacks complete value proof")
+            try:
+                frame = _rect(row)
+            except Stopped as error:
+                raise Stopped("send_state_unknown", "An exact AX body candidate lacks positive geometry") from error
+            if not contains(body, frame):
+                continue
+            containers = [parent for parent in parents if parent is not area
+                          and parent.get("role") in {"AXGroup", "AXScrollArea", "AXList", "AXTable", "AXOutline"}
+                          and parent.get("element_pid") == self.pid]
+            if not any(_rect(parent)["height"] > 2 and _rect(parent)["width"] > 2
+                       and contains(body, _rect(parent)) and contains(_rect(parent), frame) for parent in containers):
+                continue
+            key = tuple(frame[k] for k in ("x", "y", "width", "height"))
+            if key not in found:
+                found.add(key)
+                clipped += int(frame["height"] <= 2 or frame["width"] <= 2)
+        return {"source": "full_AX_body_proof", "exact_text_node_occurrences": len(found),
+                "clipped_exact_text_node_occurrences": clipped, "same_chat_ancestry_verified": True,
+                "count_unit": "distinct_AX_text_geometries", "may_include_viewport_clipped_nodes": True,
+                "viewport_visibility_verified": False, "message_count_verified": False}
+
+    def feishu_return_after_submit(self):
+        self.feishu_send_mark("focus_return_after_submit_started")
+        try:
+            self.feishu_submit_focus_receipt = self.finish_focus()
+        except Exception as failure:
+            # Cache even transport/protocol uncertainty. Finalization must not
+            # make a second restoration attempt or replace the first receipt.
+            self.feishu_submit_focus_receipt = {"focus_restored": False,
+                "focus_restore_requested": self.focus_restore_requested, "focus_restore_attempted": None,
+                "restore_reason": "focus_finalization_unknown", "focus_finalization_exception_type": type(failure).__name__}
+        finally:
+            self.feishu_send_mark("focus_return_after_submit_finished", "postcondition")
 
     def feishu_composer(self, tree):
         rows = self.feishu_composer_candidates(tree)
@@ -1795,10 +2045,24 @@ class ChatSession:
             return tree
         if self.feishu_draft(tree):
             raise Stopped("draft_present", "The current chat has a draft; navigation stopped to preserve it")
-        menu = [r for r in tree.get("menu_elements", []) if r.get("title") == "搜索" and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
+        menu = [r for r in tree.get("menu_elements", []) if r.get("role") == "AXMenuItem"
+                and _feishu_search_open_control_allowed(r) and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
         buttons = [r for r in self.feishu_elements(tree) if r.get("role") == "AXButton"
-                   and any(re.split(r"[（(]", r.get(k, ""), maxsplit=1)[0].strip() == "搜索" for k in ("title", "description"))
+                   and _feishu_search_open_control_allowed(r)
                    and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
+        if not menu and not buttons:
+            # The current chat has no eligible search control. Inspect its menu
+            # once, then use only IDs from that fresh bound tree. Steady-state
+            # Send/read baselines never inherit optional menu failures.
+            tree = self.feishu_read(include_menus=True)
+            self.feishu_header(tree, current)
+            if self.feishu_draft(tree):
+                raise Stopped("draft_present", "The current chat has a draft; menu navigation stopped to preserve it")
+            menu = [r for r in tree.get("menu_elements", []) if r.get("role") == "AXMenuItem"
+                    and _feishu_search_open_control_allowed(r) and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
+            buttons = [r for r in self.feishu_elements(tree) if r.get("role") == "AXButton"
+                       and _feishu_search_open_control_allowed(r)
+                       and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
         search = _unique(menu or buttons, "A unique AX search control is required")
         self.call("press" if "AXPress" in search.get("actions", []) else "click", element_id=search["element_id"])
         _, modal = self.feishu_wait_search_modal(opened=True)
@@ -2070,6 +2334,7 @@ class ChatSession:
         return focused or inputs
 
     def feishu_edit(self, tree, action=None):
+        self.feishu_edit_proof = None
         before = self.feishu_draft(tree)
         action = action or self.request["action"]
         if action == "draft" and before:
@@ -2116,6 +2381,19 @@ class ChatSession:
                 return self.feishu_verify_cleared()
             raise Stopped("draft_unverified", "Final AX composer differs from the exact expected serialization; no replay")
         self.status(strict=True)
+        if action == "draft":
+            typed = [row.get("result") for row in results if row.get("command") == "type_text"]
+            if (completed.get("target_pid") == self.pid and completed.get("completed_count") == len(actions)
+                    and len(results) == len(actions) and all(row.get("command") == action["command"] for row, action in zip(results, actions))
+                    and len(typed) == 1 and isinstance(typed[0], dict)
+                    and typed[0].get("value_verified") is True and typed[0].get("value") == expected_value):
+                # This is a retained complete readback, not a fabricated fresh
+                # AX tree. The native submit still rereads the exact cached
+                # header/composer, ancestry, focus, geometry and entire value.
+                self.feishu_edit_proof = {"target_pid": self.pid, "window_title": self.target["window_title"],
+                    "window_frame": dict(self.frame), "chat_title": self.title,
+                    "composer_id": composer["element_id"], "value": final["value"]}
+            self.feishu_send_mark("complete_draft", "postcondition")
         answer = {"draft_empty": not expected, "draft_verified": True, "draft": expected, "sent": False}
         if action == "clear":
             answer.update(empty_value=final["value"], verification_source="exact_full_AX_readback")
@@ -2132,12 +2410,61 @@ class ChatSession:
         return {"draft_empty": True, "draft_verified": True, "draft": "", "sent": False,
                 "empty_value": value, "verification_source": "fresh_AX_exact_known_empty_serialization"}
 
+    def feishu_send_mark(self, name, phase="executing"):
+        """Record real call boundaries through the existing metadata context."""
+        self.feishu_send_points[name] = time.perf_counter()
+        try:
+            from task_runtime import current_context
+            context = current_context()
+            if context is not None:
+                substage = "feishu_" + name
+                if name == "confirmation_finished":
+                    substage = "feishu_send_verified" if self.send_verified else "feishu_send_confirmation_unverified"
+                context.record_phase(phase, substage)
+                if self.feishu_phase_log_complete is None:
+                    self.feishu_phase_log_complete = True
+        except Exception:
+            # Diagnostic persistence never authorizes input/replay or changes
+            # already verified business evidence.
+            self.feishu_phase_log_complete = False
+
+    def feishu_send_timing(self):
+        points = self.feishu_send_points
+        timing = {"clock": "perf_counter_ms", "duration_basis": "same_invocation_call_boundaries",
+                  "hid_event_timestamps_available": False,
+                  "runtime_phase_log_complete": self.feishu_phase_log_complete,
+                  "draft_verification_reused": self.feishu_send_proof_reused,
+                  "confirmation_verified": self.send_verified,
+                  "confirmation_read_count": self.feishu_confirmation_reads,
+                  "focus_return_requested_after_submit": self.feishu_submit_focus_receipt is not None and self.focus_restore_requested,
+                  "focus_return_verified_after_submit": self.feishu_submit_focus_receipt is not None and self.feishu_submit_focus_receipt.get("focus_restored") is True,
+                  "confirmation_evidence": {"before_exact_body_occurrences": self.feishu_confirmation_baseline,
+                      "read_summaries": list(self.feishu_confirmation_observations),
+                      "summaries_truncated": self.feishu_confirmation_reads > len(self.feishu_confirmation_observations)}}
+        for key, start, end in (
+            ("invocation_to_submit_call_ms", "invocation_started", "submit_call_started"),
+            ("complete_draft_to_submit_call_ms", "complete_draft", "submit_call_started"),
+            ("submit_call_ms", "submit_call_started", "submit_call_finished"),
+            ("focus_return_after_submit_call_ms", "focus_return_after_submit_started", "focus_return_after_submit_finished"),
+            ("submit_call_finished_to_focus_return_finished_ms", "submit_call_finished", "focus_return_after_submit_finished"),
+            ("submit_call_finished_to_confirmation_ms", "submit_call_finished", "confirmation_finished"),
+        ):
+            first, last = points.get(start), points.get(end)
+            if (type(first) in {int, float} and type(last) in {int, float} and math.isfinite(first)
+                    and math.isfinite(last) and 0 <= last - first <= 86_400):
+                timing[key] = round((last - first) * 1000, 3)
+        return timing
+
     def send_once(self, value):
         text = self.request["text"]
         before = self.draft_value(value)
         if before not in {"", text}:
             raise Stopped("draft_present", "A different existing draft was preserved; no send or overwrite")
-        before_occurrences = sum(_norm(row["text"]) == _norm(text) for row in self.visible_rows(value))
+        baseline_ax_proof = self.feishu_full_ax_body_proof(value, text) if self.app == FEISHU else None
+        before_occurrences = (baseline_ax_proof["exact_text_node_occurrences"] if baseline_ax_proof is not None
+                              else sum(_norm(row["text"]) == _norm(text) for row in self.visible_rows(value)))
+        if self.app == FEISHU:
+            self.feishu_confirmation_baseline = before_occurrences
         written_here = False
         typed_receipt, draft_proof = None, None
         if not before:
@@ -2148,9 +2475,18 @@ class ChatSession:
                 typed_receipt, draft_proof = self.edited_input_receipt, value
             else:
                 self.feishu_edit(value, action="draft")
-                value = self.refresh()
-        if self.draft_value(value) != text:
+                proof = self.feishu_edit_proof
+                composer_id = self.feishu_composer(value)["element_id"]
+                self.feishu_send_proof_reused = (isinstance(proof, dict) and proof.get("target_pid") == self.pid
+                    and proof.get("window_title") == self.target["window_title"] and proof.get("window_frame") == self.frame
+                    and proof.get("chat_title") == self.title and proof.get("composer_id") == composer_id
+                    and proof.get("value") == text + STRUCTURE)
+                if not self.feishu_send_proof_reused:
+                    value = self.refresh()
+        if not self.feishu_send_proof_reused and self.draft_value(value) != text:
             raise Stopped("draft_changed", "The exact authorized message is no longer the complete draft; no send")
+        if self.app == FEISHU and not self.feishu_send_proof_reused:
+            self.feishu_send_mark("complete_draft", "postcondition")
         self.status(strict=True)
         if self.app == WECHAT:
             region = self.wechat_regions()["composer"]
@@ -2190,9 +2526,14 @@ class ChatSession:
             recipient = _unique(headers, "Exact current AX recipient header is ambiguous; no send")
             self.call("click", element_id=composer["element_id"])
             self.submit_started = True
-            submitted = self.call("submit_text", element_id=composer["element_id"], recipient_element_id=recipient["element_id"],
-                                  expected_recipient=self.title, expected_value=composer["value"],
-                                  expected_empty_value="发送给 " + self.title + "\n" + STRUCTURE, allow_submit=True)
+            self.feishu_send_mark("submit_call_started")
+            try:
+                submitted = self.call("submit_text", element_id=composer["element_id"], recipient_element_id=recipient["element_id"],
+                                      expected_recipient=self.title,
+                                      expected_value=self.feishu_edit_proof["value"] if self.feishu_send_proof_reused else composer["value"],
+                                      expected_empty_value="发送给 " + self.title + "\n" + STRUCTURE, allow_submit=True)
+            finally:
+                self.feishu_send_mark("submit_call_finished")
         if submitted.get("submit_events_posted") is not True or submitted.get("submit_preconditions_verified") is not True:
             raise Stopped("send_state_unknown", "Submission completion/preconditions are unknown; never replay")
         self.submit_posted = True
@@ -2200,20 +2541,51 @@ class ChatSession:
         # Posting Return is not a send result. Observe this same PID/title and
         # full composer plus increased exact message occurrence in the body.
         deadline = time.monotonic() + 5
+        wechat_draft_reobserved = False
+        if self.app == FEISHU:
+            self.feishu_return_after_submit()
+        else:
+            self.wechat_return_after_submit(submitted, clicked)
         while True:
+            if self.app == FEISHU:
+                self.feishu_confirmation_reads += 1
             value = self.refresh()
             draft = self.draft_value(value)
             rows = self.visible_rows(value)
             visible = "\n".join(row["text"] for row in rows)
-            occurrences = sum(_norm(row["text"]) == _norm(text) for row in rows)
+            full_ax_proof = self.feishu_full_ax_body_proof(value, text) if self.app == FEISHU else None
+            occurrences = (full_ax_proof["exact_text_node_occurrences"] if full_ax_proof is not None
+                           else sum(_norm(row["text"]) == _norm(text) for row in rows))
+            if self.app == FEISHU and len(self.feishu_confirmation_observations) < 8:
+                self.feishu_confirmation_observations.append({"read_index": self.feishu_confirmation_reads,
+                    "exact_body_occurrences": occurrences, "visible_row_count": len(rows),
+                    "proof_source": "full_AX_body_proof", "clipped_exact_body_occurrences": full_ax_proof["clipped_exact_text_node_occurrences"],
+                    "composer_empty": not draft, "tree_complete": value.get("truncated") is False,
+                    "menus_requested": False, "body_region": self.feishu_body_region(value)})
             if not draft and occurrences > before_occurrences:
                 self.send_verified = True
+                if self.app == FEISHU:
+                    self.feishu_send_mark("confirmation_finished", "postcondition")
                 if written_here:
                     event_timing = self.wechat_verified_send_timing(typed_receipt, draft_proof, submitted, value)
                 break
             if draft not in {"", text}:
+                if (self.app == WECHAT and self.submit_posted and self.wechat_submit_focus_receipt is not None
+                        and not wechat_draft_reobserved):
+                    # One observed post-submit OCR frame can differ from the
+                    # next complete background composer. Preserve its value;
+                    # only another strict read may resolve it, never input or
+                    # focus recovery. The original deadline is not renewed.
+                    wechat_draft_reobserved = True
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(.12, remaining))
+                        if time.monotonic() < deadline:
+                            continue
                 raise Stopped("draft_changed", "Composer changed after submission; send state is uncertain and no replay is allowed")
             if time.monotonic() >= deadline:
+                if self.app == FEISHU:
+                    self.feishu_send_mark("confirmation_finished", "postcondition")
                 return {"sent": None, "send_verified": False, "submission_state": "posted_unverified", "submit_events_posted": True,
                         "delivery_verified": False, "draft_preserved": True, "visible_text": visible, "rows": rows,
                         "reply_evidence": {"sender_verified": False, "new_since_request": None, "requested_text_visible": False}}
@@ -2227,6 +2599,9 @@ class ChatSession:
                 "reply_baseline_text": echo_baseline}
         if event_timing is not None:
             result["send_event_timing"] = event_timing
+        if self.app == FEISHU:
+            result["full_AX_body_proof"] = {**full_ax_proof, "baseline_text_node_occurrences": before_occurrences,
+                                            "increased_since_baseline": occurrences > before_occurrences}
         return result
 
     def wechat_verified_send_timing(self, typed, draft_proof, submitted, observed):
@@ -2273,7 +2648,7 @@ class ChatSession:
             if type(source.get(name)) is bool:
                 timing[name] = source[name]
         proof_age = submitted.get("continuous_submit_proof_frame_age_ms")
-        if type(proof_age) in {int, float} and math.isfinite(proof_age) and 0 <= proof_age <= 1000:
+        if type(proof_age) in {int, float} and math.isfinite(proof_age) and 0 <= proof_age <= 2000:
             timing["continuous_submit_proof_frame_age_ms"] = round(proof_age, 3)
         return timing
 
@@ -2405,7 +2780,9 @@ class ChatSession:
 
     def refresh(self):
         expected_title = self.title
-        value = self.wechat_read(expected_title=expected_title) if self.app == WECHAT else self.feishu_read()
+        value = ((self.wechat_send_confirmation_read() if self.wechat_submit_focus_receipt is not None
+                  else self.wechat_read(expected_title=expected_title)) if self.app == WECHAT else
+                 self.feishu_send_confirmation_read() if self.feishu_submit_focus_receipt is not None else self.feishu_read())
         title = self.wechat_header(value, expected_title) if self.app == WECHAT else self.feishu_header(value, expected_title)
         if not _label_matches(title, expected_title):
             raise Stopped("recipient_mismatch", "Selected chat changed during reading")
@@ -2623,6 +3000,8 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
                   "sent": sent, "automatic_replay_allowed": False}
         if session and session.submit_started:
             answer["submission_state"] = "observed_in_chat" if session.send_verified else "not_posted" if sent is False else "unknown"
+            if sent is None:
+                answer["completion_unknown"] = True
     finally:
         if session:
             try:
@@ -2632,8 +3011,15 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
                                "restore_reason": "focus_finalization_unknown",
                                "focus_finalization_exception_type": type(failure).__name__}
     answer.update(restoration)
-    if session and session.app == FEISHU and session.focus_attempted:
+    if session and session.app == FEISHU and request.get("action") == "send":
+        answer["send_call_timing"] = session.feishu_send_timing()
+    if session and session.focus_attempted and (session.app == FEISHU or session.wechat_submit_focus_receipt is not None):
         business_completed = answer["ok"]
+        if request.get("action") == "send":
+            result = answer.get("result", {})
+            business_completed = (business_completed and session.send_verified is True
+                and result.get("sent") is True and result.get("send_verified") is True
+                and result.get("submission_state") == "observed_in_chat")
         restored = restoration.get("focus_restored") is True
         yielded = restoration.get("restore_reason") in {"user_interrupted", "user_takeover", "new_user_activity"}
         answer.update(focus_claim_verified=session.focus_claim_verified,
@@ -2644,19 +3030,21 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
                       business_completed=business_completed, scope_completed=business_completed and restored)
         if isinstance(answer.get("result"), dict):
             answer["result"].update(restoration)
-        if business_completed and not restored:
+        if answer["ok"] and not restored:
             # The business proof remains valid, but the full foreground scope
             # did not finish. Expose that failure instead of silently returning
             # ok from a native ok:true/restored:false receipt. Never replay.
             answer.update(ok=False, automatic_replay_allowed=False,
                           error={"code": "user_interrupted" if yielded else "focus_restore_unverified",
-                                 "message": "Business completed; focus yielded to the user" if yielded else "Business completed; the saved focus return is unverified. Do not replay input or reclaim focus",
-                                 "details": {"business_completed": True, "focus_return_required": True,
+                                 "message": "Focus yielded to the user; preserve the existing business proof and never replay input" if yielded else "The saved focus return is unverified. Preserve the existing business proof; do not replay input or reclaim focus",
+                                 "details": {"business_completed": business_completed, "focus_return_required": True,
                                              "restore_reason": restoration.get("restore_reason", "restore_unverified")}})
             if session.submit_started:
                 answer.update(sent=True if session.send_verified else answer["result"].get("sent"),
                               send_verified=session.send_verified,
                               submission_state=answer["result"].get("submission_state", "unknown"))
+                if session.submit_posted and not session.send_verified:
+                    answer["completion_unknown"] = True
     elapsed = round((time.monotonic() - started) * 1000, 3)
     answer["elapsed_ms"] = elapsed
     if session:

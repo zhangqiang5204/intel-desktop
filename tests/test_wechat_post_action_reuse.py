@@ -12,9 +12,10 @@ class PostActionFake(WeChatFake):
 
     def visual(self, request, region_only=False):
         value = super().visual(request, region_only)
+        background = request.get("command") == "background_visual_read"
         value.update(window_id=91, display_topology_signature="one-screen",
                      focused_window_frame=dict(self.frame), captured_regions=[dict(self.frame)],
-                     read_only_background=False, input_eligible=True, target_identity_verified=True)
+                     read_only_background=background, input_eligible=not background, target_identity_verified=True)
         return value
 
     def __call__(self, request):

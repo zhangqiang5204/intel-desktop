@@ -83,18 +83,8 @@ class MCPClient:
 
     def close(self):
         self.selector.close()
-        if self.process.poll() is None:
-            self.process.stdin.close()
-            try:
-                self.process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait()
-        self.process.stdout.close()
+        from process_shutdown import drain_process_after_eof
+        return drain_process_after_eof(self.process)
 
 
 def main():

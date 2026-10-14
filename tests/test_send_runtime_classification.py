@@ -36,10 +36,10 @@ class SendClassificationTests(unittest.TestCase):
         self.runtime.close()
         self.temporary.cleanup()
 
-    def classify(self, response, *, command='chat', action='send', prior=None):
+    def classify(self, response, *, command='chat', action='send', prior=None, native=None):
         self.sequence += 1
         def execute(context):
-            context.record_native({'ok': True, 'result': {'events_posted': 2, 'value_verified': False}})
+            context.record_native(native if native is not None else {'ok': True, 'result': {'events_posted': 2, 'value_verified': False}})
             if prior:
                 context.set_outcome(prior, error_code='fixture_existing_outcome')
             classify_result(command, {'action': action}, response, context)
@@ -50,7 +50,7 @@ class SendClassificationTests(unittest.TestCase):
     def test_complete_local_send_is_verified_without_remote_delivery(self):
         summary = self.classify(verified_send())
         self.assertEqual(summary['state'], 'verified')
-        for key in ('proof_full_value', 'proof_same_target', 'recipient_verified', 'value_verified', 'focus_verified'):
+        for key in ('proof_full_value', 'proof_same_target', 'recipient_verified', 'value_verified', 'focus_verified', 'proof_chat_send'):
             self.assertIs(summary['verified_flags'][key], True)
         events = self.runtime.logs(task_id='send-classification-fixture')['events']
         self.assertEqual(sum(event['substage'] == 'complete_chat_send' for event in events), 1)
@@ -69,6 +69,7 @@ class SendClassificationTests(unittest.TestCase):
                     summary = self.classify(response)
                     self.assertEqual(summary['state'], 'accepted_unverified')
                     self.assertNotIn('proof_full_value', summary['verified_flags'])
+                    self.assertNotIn('proof_chat_send', summary['verified_flags'])
 
     def test_full_send_source_and_observed_submission_state_are_required(self):
         for field, bad_values in (
@@ -109,8 +110,50 @@ class SendClassificationTests(unittest.TestCase):
         response = verified_send()
         response['focus_restored'] = False
         summary = self.classify(response)
-        self.assertEqual(summary['state'], 'verified')  # Retain independently proven local send.
+        self.assertEqual(summary['state'], 'accepted_unverified')
         self.assertFalse(summary['verified_flags']['focus_verified'])
+        self.assertTrue(summary['verified_flags']['proof_chat_send'])  # Keep independently proven business effect.
+
+    def test_focus_lifecycle_requires_restoration_or_explicit_safe_user_yield(self):
+        for command, action, business_response in (
+            ('chat', 'send', verified_send()),
+            ('chat', 'draft', {'ok': True, 'result': {
+                'draft_verified': True, 'recipient_verified': True, 'foreground_preserved': True}}),
+            ('select_text', None, {'ok': True, 'result': {
+                'selection_verified': True, 'value_verified': True, 'text_unchanged': True, 'system_focus_preserved': True}}),
+        ):
+            for lifecycle, scope_completed, expected in (
+                ('restored', True, 'verified'),
+                ('yielded_to_user', True, 'verified'),
+                ('yielded_to_user', False, 'accepted_unverified'),
+                ('yielded_to_user', 1, 'accepted_unverified'),
+                ('unverified', True, 'accepted_unverified'),
+                ('unverified', False, 'accepted_unverified'),
+            ):
+                with self.subTest(command=command, action=action, lifecycle=lifecycle, scope=scope_completed):
+                    response = copy.deepcopy(business_response)
+                    response.update(focus_lifecycle=lifecycle, scope_completed=scope_completed,
+                                    business_completed=True, focus_return_required=True,
+                                    focus_restored=lifecycle == 'restored')
+                    summary = self.classify(response, command=command, action=action)
+                    self.assertEqual(summary['state'], expected)
+                    self.assertEqual(summary['verified_flags']['focus_verified'], expected == 'verified')
+                    self.assertTrue(summary['verified_flags']['business_completed'])
+                    if type(scope_completed) is bool:
+                        self.assertEqual(summary['verified_flags']['scope_completed'], scope_completed)
+                    if action == 'send':
+                        self.assertTrue(summary['verified_flags']['proof_chat_send'])
+
+    def test_missing_required_focus_return_cannot_use_stale_preservation_flags(self):
+        for restored in (False, True):
+            with self.subTest(restored=restored):
+                response = verified_send()
+                response.update(focus_return_required=True, focus_restored=restored)
+                response['result']['foreground_preserved'] = True
+                summary = self.classify(response)
+                self.assertEqual(summary['state'], 'verified' if restored else 'accepted_unverified')
+                self.assertEqual(summary['verified_flags']['focus_verified'], restored)
+                self.assertTrue(summary['verified_flags']['proof_chat_send'])
 
     def test_failed_unknown_or_existing_outcome_cannot_be_promoted_by_stale_send_fields(self):
         for unknown in (False, True):
@@ -121,6 +164,40 @@ class SendClassificationTests(unittest.TestCase):
         response = verified_send()
         response['ok'] = 1
         self.assertEqual(self.classify(response)['state'], 'accepted_unverified')
+
+    def test_selection_business_proof_requires_every_strict_selection_postcondition(self):
+        response = {'ok': True, 'result': {'selection_verified': True, 'value_verified': True,
+                                          'text_unchanged': True, 'system_focus_preserved': True}}
+        summary = self.classify(response, command='select_text', action=None)
+        self.assertEqual(summary['state'], 'verified')
+        self.assertTrue(summary['verified_flags']['proof_text_selection'])
+        self.assertNotIn('proof_chat_send', summary['verified_flags'])
+        for field in ('selection_verified', 'value_verified', 'text_unchanged', 'system_focus_preserved'):
+            for bad in (False, None, 1, 'true', 'missing'):
+                with self.subTest(field=field, bad=bad):
+                    invalid = copy.deepcopy(response)
+                    if bad == 'missing':
+                        invalid['result'].pop(field)
+                    else:
+                        invalid['result'][field] = bad
+                    summary = self.classify(invalid, command='select_text', action=None)
+                    self.assertEqual(summary['state'], 'accepted_unverified')
+                    self.assertNotIn('proof_text_selection', summary['verified_flags'])
+        response['ok'] = 1
+        self.assertNotIn('proof_text_selection', self.classify(response, command='select_text')['verified_flags'])
+
+    def test_native_echoes_and_unrelated_draft_postconditions_cannot_create_business_proof(self):
+        response = {'ok': True, 'result': {'draft_verified': True, 'recipient_verified': True,
+                                          'foreground_preserved': True}}
+        native = {'ok': True, 'proof_chat_send': True, 'result': {
+            'proof_chat_send': True, 'proof_text_selection': True, 'capture_scope_released': True}}
+        summary = self.classify(response, action='draft', native=native)
+        self.assertEqual(summary['state'], 'verified')
+        self.assertTrue(summary['verified_flags']['draft_verified'])
+        self.assertTrue(summary['verified_flags']['capture_scope_released'])
+        for key in ('proof_chat_send', 'proof_text_selection'):
+            self.assertNotIn(key, summary['verified_flags'])
+            self.assertFalse(any(key in event['verified_flags'] for event in self.runtime.logs(task_id='send-classification-fixture')['events']))
 
     def test_real_highlevel_fake_wechat_and_feishu_send_feed_verified_runtime_metadata(self):
         for factory in (WeChatSendFake, FeishuSendFake):
@@ -145,6 +222,7 @@ class SendClassificationTests(unittest.TestCase):
                 self.assertEqual(packet['summary']['state'], 'verified')
                 self.assertTrue(packet['summary']['verified_flags']['value_verified'])
                 self.assertTrue(packet['summary']['verified_flags']['focus_verified'])
+                self.assertTrue(packet['summary']['verified_flags']['proof_chat_send'])
                 submits = [call for call in fake.calls if call['command'] == 'submit_text' or call.get('key') == 'return']
                 self.assertEqual(len(submits), 1)
                 self.assertNotIn(PRIVATE, json.dumps(packet['summary']))

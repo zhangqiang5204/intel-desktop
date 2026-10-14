@@ -6,7 +6,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from chat_workflows import ChatSession, FEISHU, SEARCH_MODAL, Stopped, _focus_claim_receipt, execute_chat
+from chat_workflows import ChatSession, FEISHU, SEARCH_MODAL, Stopped, _focus_claim_receipt, _focus_receipt, execute_chat
 from test_chat_completion import FeishuSendFake, send_request
 
 
@@ -93,7 +93,13 @@ class FeishuFocusRestoreTests(unittest.TestCase):
                 self.assertTrue(response["result"]["focus_restored"])
                 self.assertEqual(fake.restore_calls, 1)
                 self.assertEqual(len(self.claims(fake)), 1)
-                self.assertTrue(fake.calls[-1].get("restore_previous"))
+                if action == "send":
+                    submit = next(i for i, c in enumerate(fake.calls) if c["command"] == "submit_text")
+                    restore = next(i for i, c in enumerate(fake.calls) if c.get("restore_previous"))
+                    self.assertLess(submit, restore)
+                    self.assertEqual(fake.calls[restore + 1]["command"], "inspect")
+                else:
+                    self.assertTrue(fake.calls[-1].get("restore_previous"))
 
     def test_existing_modal_read_keeps_first_origin_without_second_claim(self):
         fake = FocusFeishuFake()
@@ -300,6 +306,49 @@ class FeishuFocusRestoreTests(unittest.TestCase):
         self.assertTrue(response["focus_restored"])
         self.assertNotIn("Private diagnostic", str(response))
         self.assertEqual(fake.restore_calls, 1)
+
+    def test_forward_scope_failure_details_and_guard_diagnostic_survive_one_cleanup(self):
+        fake = FocusFeishuFake()
+        diagnostic = {"navigation_kind": "main_to_search", "candidate_reason": "bound",
+            "search_control_role": "AXButton", "accepted_navigation": "exact_search_AXPress", "claimed_window_still_focused": True,
+            "candidate_available": True, "candidate_retained": True, "action_accepted": True,
+            "adoption_reason": "AX_main_window_mismatch", "current_AXMainWindow_kind": "known_search_modal",
+            "current_AXFocusedWindow_kind": "known_search_modal",
+            "activity_revision_matches": True, "candidate_within_deadline": True,
+            "claimed_task_matches": True, "claimed_operation_matches": True,
+            "search_modal_count": 1, "modal_matches_AXFocusedWindow": True, "main_matches_AXMainWindow": False}
+        details = {"events_posted": 0, "pending_search_open": True, "pending_search_return": False,
+                   "owned_navigation_diagnostic": diagnostic}
+        def stopped(session):
+            session.start()
+            raise Stopped("focus_scope_changed", "Current exact window no longer owns focus", details)
+        def callback(request):
+            response = fake(request)
+            if request["command"] == "focus" and request.get("restore_previous"):
+                response["result"].update(focus_restored=False, restore_reason="task_focus_changed",
+                    owned_navigation_diagnostic=copy.deepcopy(diagnostic))
+            return response
+        with patch.object(ChatSession, "run", stopped):
+            response = execute_chat({"app": FEISHU, "action": "read"}, callback, recipe_store=False)
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "focus_scope_changed")
+        self.assertEqual(response["error"]["details"], details)
+        self.assertEqual(response["owned_navigation_diagnostic"], diagnostic)
+        self.assertFalse(response["scope_completed"])
+        self.assertEqual(fake.restore_calls, 1)
+        self.assertEqual(len(self.claims(fake)), 1)
+        self.assertFalse(any(c["command"] in {"type_text", "submit_text", "batch"} for c in fake.calls))
+
+    def test_forward_navigation_diagnostic_rejects_content_and_untyped_evidence(self):
+        raw = {"navigation_kind": "main_to_search", "current_AXMainWindow_kind": "private window title",
+            "candidate_reason": "search_control_not_exact", "adoption_reason": "candidate_not_retained",
+            "candidate_retained": "true", "claimed_task_matches": 1, "activity_revision_matches": False,
+            "search_modal_count": True, "search_control_allowed": False, "search_control_role": "private title",
+            "accepted_navigation": "private caption", "claimed_window_still_focused": 1, "chat": "private", "query": "private"}
+        self.assertEqual(_focus_receipt({"owned_navigation_diagnostic": raw}),
+            {"owned_navigation_diagnostic": {"navigation_kind": "main_to_search",
+             "candidate_reason": "search_control_not_exact", "adoption_reason": "candidate_not_retained",
+             "activity_revision_matches": False, "search_control_allowed": False}})
 
     def test_background_path_never_claims_or_restores(self):
         from test_background_chat_edit import BackgroundFake

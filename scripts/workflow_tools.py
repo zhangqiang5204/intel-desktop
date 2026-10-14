@@ -54,16 +54,21 @@ def classify_result(command,args,response,context):
        and value.get('send_verification_source')=='fresh_same_chat_empty_composer_and_increased_complete_exact_text_row_occurrence'):
   focus=any(source.get(key) is True for source in (value,response)
             for key in ('foreground_preserved','focus_isolated','focus_restored','system_focus_preserved'))
-  flags={'proof_full_value':True,'proof_same_target':True,'focus_verified':focus,'recipient_verified':True,'value_verified':True}
+  flags={'proof_full_value':True,'proof_same_target':True,'focus_verified':focus,'recipient_verified':True,'value_verified':True,'proof_chat_send':True}
  elif command in {'type_text','set_text','clear_text','background_type_text','background_chat_edit'} and value.get('value_verified') is True:
   flags={'proof_full_value':True,'proof_same_target':True,'focus_verified':True,'value_verified':True}
- elif command=='select_text' and value.get('selection_verified') is True and value.get('value_verified') is True and value.get('text_unchanged') is True and (value.get('system_focus_preserved') is True or value.get('foreground_verified') is True):
-  flags={'proof_full_value':True,'proof_same_target':True,'focus_verified':True,'value_verified':True}
+ elif command=='select_text' and response.get('ok') is True and value.get('selection_verified') is True and value.get('value_verified') is True and value.get('text_unchanged') is True and (value.get('system_focus_preserved') is True or value.get('foreground_verified') is True):
+  flags={'proof_full_value':True,'proof_same_target':True,'focus_verified':True,'value_verified':True,'proof_text_selection':True}
  elif command in {'observe','inspect','status','wait_text','visual_read','background_visual_read','recipe'}:
   context.set_outcome('completed');return
  if flags:
+  if lifecycle=='unverified':flags['focus_verified']=False
+  elif lifecycle=='yielded_to_user':flags['focus_verified']=response.get('scope_completed') is True
+  elif lifecycle=='restored':flags['focus_verified']=True
+  elif any(source.get('focus_return_required') is True for source in (value,response)):
+   flags['focus_verified']=any(source.get('focus_restored') is True for source in (value,response))
   context.record_phase('postcondition','complete_chat_send' if command=='chat' and args.get('action')=='send' else 'complete_native_value',verified_flags=flags)
-  context.set_outcome('verified',verified_flags=flags)
+  context.set_outcome('verified' if all(flags.values()) else 'accepted_unverified',verified_flags=flags)
  else:context.set_outcome('accepted_unverified')
 
 def task_action(args,meta,runtime):
