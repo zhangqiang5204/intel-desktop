@@ -37,8 +37,8 @@
       "source": "README.md",
       "destination": "README.md",
       "origin": "public_project_source",
-      "source_sha256": "bbcd9cd9e77d3f0720b54b048aa20e21594d55b08918a6a0ed9d33e063f7c5d9",
-      "packaged_sha256": "bbcd9cd9e77d3f0720b54b048aa20e21594d55b08918a6a0ed9d33e063f7c5d9"
+      "source_sha256": "4517366563404b2c4d8de4a727bdfdd00916c1dcd73f7d024b72729c248df0f9",
+      "packaged_sha256": "4517366563404b2c4d8de4a727bdfdd00916c1dcd73f7d024b72729c248df0f9"
     },
     {
       "source": "mcp.json",
