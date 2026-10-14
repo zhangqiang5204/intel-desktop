@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "intel_desktop": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "${PLUGIN_ROOT}/scripts/server.py"
+      ],
+      "cwd": "${PLUGIN_ROOT}",
+      "enabled": true,
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 180
+    }
+  }
+}

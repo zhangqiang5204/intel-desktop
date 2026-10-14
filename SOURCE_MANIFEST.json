@@ -1,0 +1,685 @@
+{
+  "schema": "source_snapshot/v1",
+  "snapshot_utc": "2026-10-14T08:12:34.721698+00:00",
+  "source_label": "intel-desktop-plugin source and its offline regression fixtures",
+  "source_version": "0.1.70",
+  "files": [
+    {
+      "source": ".codex-plugin/plugin.json",
+      "destination": ".codex-plugin/plugin.json",
+      "source_sha256": "5562cd5fc24d64fbfe36e3c554b04eed4422870bcb5c8b1fc9cc9d97f8818be4",
+      "origin": "plugin_source_snapshot",
+      "packaging_adaptation": "public_author_and_local_executor_metadata",
+      "packaged_sha256": "9e0d33d3527e989c3d24ff43705afbbf3ca2b8bf3ee9b2f309ddb5e5056977db"
+    },
+    {
+      "source": "native/BackgroundChatEdit.swift",
+      "destination": "native/BackgroundChatEdit.swift",
+      "source_sha256": "00577e9e5bdb8c967a45f043494579fbd59fd03c2debac483a7be49d4b5f575d",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "00577e9e5bdb8c967a45f043494579fbd59fd03c2debac483a7be49d4b5f575d",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/BackgroundInput.swift",
+      "destination": "native/BackgroundInput.swift",
+      "source_sha256": "7d584bb66f1c43f1ed7b0d2a36cc386c767c8c79ba1ddd650585274013f1ecb8",
+      "origin": "plugin_source_snapshot",
+      "public_fixture_substitution": true,
+      "packaged_sha256": "2eb5b0527dec99a75f89c7040837a025fb0ef0880fe97add44998b6f43d05aca",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/NativeAXAttributes.swift",
+      "destination": "native/NativeAXAttributes.swift",
+      "source_sha256": "c57cecb645199978d75893a5823dd572aec761b3cc38129e9f6607a136973f7d",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "c57cecb645199978d75893a5823dd572aec761b3cc38129e9f6607a136973f7d",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/NativeInteraction.swift",
+      "destination": "native/NativeInteraction.swift",
+      "origin": "plugin_source_snapshot",
+      "source_sha256": "0cec31093f1631eceb27163d06a8199516862c8abf9e615e6d1294d981052103",
+      "packaged_sha256": "0cec31093f1631eceb27163d06a8199516862c8abf9e615e6d1294d981052103",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
+      "packaging_adaptation": "SDK_AXSheets_compatibility_and_anonymous_offline_fixture_if_applicable"
+    },
+    {
+      "source": "native/NativeObservation.swift",
+      "destination": "native/NativeObservation.swift",
+      "source_sha256": "02ab81a48ec574ec2741d623ad966a3636f1da4edf11eac26f643a8aaefb637a",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "02ab81a48ec574ec2741d623ad966a3636f1da4edf11eac26f643a8aaefb637a",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/NativeTextSelection.swift",
+      "destination": "native/NativeTextSelection.swift",
+      "source_sha256": "ee3d18dad76bc2adb3de2459ab1d6593cfba12f98c13a3dea8223feb09ae66c6",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "ee3d18dad76bc2adb3de2459ab1d6593cfba12f98c13a3dea8223feb09ae66c6",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/NativeWindowCapture.swift",
+      "destination": "native/NativeWindowCapture.swift",
+      "source_sha256": "2c18e1e2ecbb2e7bf9a1c63fc476b767f5bb36fcb7153bf71209f514f0f97a86",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "2c18e1e2ecbb2e7bf9a1c63fc476b767f5bb36fcb7153bf71209f514f0f97a86",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/VisualDesktop.swift",
+      "destination": "native/VisualDesktop.swift",
+      "source_sha256": "84b875e4a0000ebd0e3478d9d01dfb1d2b2511eb3c656a7464ff004ad710175b",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "84b875e4a0000ebd0e3478d9d01dfb1d2b2511eb3c656a7464ff004ad710175b",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/build.sh",
+      "destination": "native/build.sh",
+      "source_sha256": "155fc1240a3d961b6983c1f1d625db8464c3958fd2a33655f3e7d2de32d40b19",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "155fc1240a3d961b6983c1f1d625db8464c3958fd2a33655f3e7d2de32d40b19",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "native/main.swift",
+      "destination": "native/main.swift",
+      "source_sha256": "49debcd3688d87fc16a38ae967e846b59fe00012f5f1b973056c809a245e2358",
+      "origin": "plugin_source_snapshot",
+      "public_fixture_substitution": true,
+      "packaged_sha256": "8395bf2678b2cd5318836cfc515a29f7029b3ef8e0457a962c641d93a99cb6bc",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
+      "packaging_adaptation": "SDK_AXSheets_compatibility_and_anonymous_offline_fixture_if_applicable"
+    },
+    {
+      "source": "plans/feishu-background-draft-owned-clear.json",
+      "destination": "plans/feishu-background-draft-owned-clear.json",
+      "source_sha256": "e5040ea2f37fa290c28dbefa15fc3b2fa02da57dedeb8d4b972c7fec50315ae2",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "e5040ea2f37fa290c28dbefa15fc3b2fa02da57dedeb8d4b972c7fec50315ae2"
+    },
+    {
+      "source": "plans/textedit-background-select-restore.json",
+      "destination": "plans/textedit-background-select-restore.json",
+      "source_sha256": "a6c9ebf067793f203c2205ebfe9b187809e22e4c9755ad52120ebb4712659882",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "a6c9ebf067793f203c2205ebfe9b187809e22e4c9755ad52120ebb4712659882"
+    },
+    {
+      "source": "plans/wechat-background-draft-owned-clear.json",
+      "destination": "plans/wechat-background-draft-owned-clear.json",
+      "source_sha256": "57cda71b67f9c58ae463fdd9930ecef399825739cc939706f3e61808ba690c9a",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "57cda71b67f9c58ae463fdd9930ecef399825739cc939706f3e61808ba690c9a"
+    },
+    {
+      "source": "scripts/chat_workflows.py",
+      "destination": "scripts/chat_workflows.py",
+      "source_sha256": "9689ecedb3ea9ebfcfdfe749d66b8d3935cafa827fbc18ace53a96e30cd1426d",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "9689ecedb3ea9ebfcfdfe749d66b8d3935cafa827fbc18ace53a96e30cd1426d"
+    },
+    {
+      "source": "scripts/daily_analysis.py",
+      "destination": "scripts/daily_analysis.py",
+      "source_sha256": "d07dfbd95cd95b6269ac76f129d2a540a1542c8148e153ccf6fa54175a01b177",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "d07dfbd95cd95b6269ac76f129d2a540a1542c8148e153ccf6fa54175a01b177"
+    },
+    {
+      "source": "scripts/desktop_client.py",
+      "destination": "scripts/desktop_client.py",
+      "source_sha256": "c00687a43e03a2593773f3f47e35ea8d60818e4d705403ce4e1c587ab79b946a",
+      "origin": "plugin_source_snapshot",
+      "packaging_adaptation": "expand_documented_PLUGIN_ROOT_and_use_configured_cwd",
+      "packaged_sha256": "64a0e99db29672600ce5839fa4bf418a4ff2fb99b465d82ad0777beecd72bd73"
+    },
+    {
+      "source": "scripts/desktop_observation.py",
+      "destination": "scripts/desktop_observation.py",
+      "source_sha256": "c51795fee57be0b653708d6052ed52fef3e3e81732394b1168483f1bf06dfcce",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "c51795fee57be0b653708d6052ed52fef3e3e81732394b1168483f1bf06dfcce",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
+      "packaging_adaptation": "parent_synced_current_general_observation_and_model_instructions"
+    },
+    {
+      "source": "scripts/desktop_transactions.py",
+      "destination": "scripts/desktop_transactions.py",
+      "source_sha256": "d43d5003502e44ceacee3f992d1f20f9b62dfb22ba604b46044037d68f09cd07",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "d43d5003502e44ceacee3f992d1f20f9b62dfb22ba604b46044037d68f09cd07"
+    },
+    {
+      "source": "scripts/learning_store.py",
+      "destination": "scripts/learning_store.py",
+      "source_sha256": "3948067fe6da638f2dfbfdcf790ce5a54ba547d59b738f751520ddf27515f337",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "3948067fe6da638f2dfbfdcf790ce5a54ba547d59b738f751520ddf27515f337"
+    },
+    {
+      "source": "scripts/mcp_images.py",
+      "destination": "scripts/mcp_images.py",
+      "source_sha256": "84fc046be00c8194d1f596192d5027c4bdbb0b5998ea7c0986b4a7dde26cba97",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "84fc046be00c8194d1f596192d5027c4bdbb0b5998ea7c0986b4a7dde26cba97"
+    },
+    {
+      "source": "scripts/recipe_store.py",
+      "destination": "scripts/recipe_store.py",
+      "source_sha256": "aa91ad08efef8dc6ae3fc6bb34d35abe399aeb911e1e24477bca164af5a894db",
+      "origin": "plugin_source_snapshot",
+      "packaging_adaptation": "repository_relative_public_test_paths",
+      "packaged_sha256": "8323d28d068aaf91cbf4805da76a79c707c3cc734698c21ead96cde35cfc1426"
+    },
+    {
+      "source": "scripts/server.py",
+      "destination": "scripts/server.py",
+      "source_sha256": "a1167740c1790d25d34eab71cd7ee5841433909ef7de772269ca52d5bc077743",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "a1167740c1790d25d34eab71cd7ee5841433909ef7de772269ca52d5bc077743",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
+      "packaging_adaptation": "parent_synced_current_general_observation_and_model_instructions"
+    },
+    {
+      "source": "scripts/task_runtime.py",
+      "destination": "scripts/task_runtime.py",
+      "source_sha256": "b84de3ac3667926ecb71b8ddfd3b040164e12f24acce6c8b54bda2e20215c645",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "b84de3ac3667926ecb71b8ddfd3b040164e12f24acce6c8b54bda2e20215c645"
+    },
+    {
+      "source": "scripts/workflow_tools.py",
+      "destination": "scripts/workflow_tools.py",
+      "source_sha256": "da6fef2c546a3fd591a2024122b4995630010141e28887a5b19b1c0f1ddb79f9",
+      "origin": "plugin_source_snapshot",
+      "packaged_sha256": "da6fef2c546a3fd591a2024122b4995630010141e28887a5b19b1c0f1ddb79f9"
+    },
+    {
+      "source": "skills/intel-desktop/SKILL.md",
+      "destination": "skills/intel-desktop/SKILL.md",
+      "source_sha256": "9db69e060684dbb404c49bd34635d0acf6f6ce6c3f12b700514a80515d66407d",
+      "origin": "plugin_source_snapshot",
+      "packaging_adaptation": "accurate_script_run_vs_management_timing_and_public_README_link",
+      "packaged_sha256": "22d0e106e29f1bb1207036ea92eeb43c01a109445802d0aebb5dac4fdc0e4a53",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_background_chat_edit.py",
+      "destination": "tests/test_background_chat_edit.py",
+      "source_sha256": "b7a0cfdd11ac48a6f5ff3728fb56b118a8ea6360ae6e23615d45905836d8c29b",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "b7a0cfdd11ac48a6f5ff3728fb56b118a8ea6360ae6e23615d45905836d8c29b"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_chat_completion.py",
+      "destination": "tests/test_chat_completion.py",
+      "source_sha256": "1af7449b2d8ee07308672a0e7c76b154ae39458ce74057c8f227b698bb171cee",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths_private_recorded_fixture_cases_excluded",
+      "packaged_sha256": "9402f6b3f24a4b0df2650a3a41772845558c2292f2b27073c8e18d3ec1c85c29"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_chat_native_timings.py",
+      "destination": "tests/test_chat_native_timings.py",
+      "source_sha256": "90d62d5f78c98e012938e5c30bca2a76855c7c40b1b3e0dd776743cba90873a3",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "90d62d5f78c98e012938e5c30bca2a76855c7c40b1b3e0dd776743cba90873a3"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_chat_workflows.py",
+      "destination": "tests/test_chat_workflows.py",
+      "source_sha256": "5eaf28b84d8efc44223814d46730e3c36f3240a45da7b0562e2c573733ca2c9b",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths_private_recorded_fixture_cases_excluded",
+      "public_fixture_substitution": true,
+      "packaged_sha256": "5d6a469510ce1693eb585ce000b6fa12aa97d2537eca8541b1ede3f548f76dab",
+      "packaging_adaptation": "anonymous_offline_fixture_aliases"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_feishu_owned_search_cleanup.py",
+      "destination": "tests/test_feishu_owned_search_cleanup.py",
+      "source_sha256": "61ec91d35087a3201bb3e10f3428f39e5020da7a4845b3aee0c961bbcd3a1388",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaging_adaptation": "synthetic_modal_fixture_no_live_record_import",
+      "packaged_sha256": "9e50f83fd432a22af68e153a8ecf97624d8984734a37bcdc3f0adf95ac4a2f20"
+    },
+    {
+      "source": "parent_authored_public_test",
+      "destination": "tests/test_generic_observation.py",
+      "origin": "parent_authored_offline_regression_fixture",
+      "packaged_sha256": "5ee0d2a0d2857969381247234bfa9a758a5f41d914fb10938436ecdb53f580c0",
+      "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
+    },
+    {
+      "source": "work/task-runtime-tests/test_interruption_metadata.py",
+      "destination": "tests/test_interruption_metadata.py",
+      "source_sha256": "eb256602ac1b54055f4c7e2e3a8d04402f4cb7c4e0448f32a0de1d2e4f2ce078",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "e8959897989e2e7bbe6fa07467bda0bd7770ac485417dd0d6acedafb52ebb52c"
+    },
+    {
+      "source": "work/learning-tests/test_learning_daily.py",
+      "destination": "tests/test_learning_daily.py",
+      "source_sha256": "ed6bf1d6c2af192d9c9193b93b288e129fa6f3a18dc8190f04aa56f99dfcc036",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "2606b0a22fd64d83388a0724c6eb523cbc175cf2069c0e324f4e119bf7cff45b"
+    },
+    {
+      "source": "work/transaction-tests/test_mcp_transactions.py",
+      "destination": "tests/test_mcp_transactions.py",
+      "source_sha256": "91ab9fc93c6ec1781e0a51c687bbcb32ac274617fb79ca316ab7bd0cc162a4b3",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "591fa7d76ef6636c568b30370b0cabdc34bdbd0db4e57f3106708fb60f740c46"
+    },
+    {
+      "source": "work/task-runtime-tests/test_menu_outcome.py",
+      "destination": "tests/test_menu_outcome.py",
+      "source_sha256": "f34307f1addae364dd0231ab8dc2704678c72a9390ff192f8880d80be2a2bdab",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "7c8ef21816180f36fc637cff5b7d9f932b19114fe0558e6e3361b020b25c6f87"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_model_observation.py",
+      "destination": "tests/test_model_observation.py",
+      "source_sha256": "42c7ac802b880fc2abe4a41fcf3dc817fe6500be4f65b3741fcabc1090bb4243",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "4250ee130accda8bd182e2b9cbcd8d75cf2b543cb0ec114917d0209eed1585d7",
+      "packaging_adaptation": "repository_relative_paths_parent_general_observation_badarg_fixture"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_native_task_context.py",
+      "destination": "tests/test_native_task_context.py",
+      "source_sha256": "e3c24ad35018b1db2940e7d2038b98d03b2c53082c4968dc1ddbb273630f4de4",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaging_adaptation": "current_runtime_operation_id_fixture",
+      "packaged_sha256": "3f3d2196e8f8ca97f0f901961e8ce40e39cd77e35ba003e8df8bc7948fa64710"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_observation_projection.py",
+      "destination": "tests/test_observation_projection.py",
+      "source_sha256": "1bb8dd450438fddd974f211a332fe6c2df527187d1f70cf90e6c24f97bfe12c8",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "9c6152ee33fdf1c7071b7ceaec8cd3a62e6f7ee5774621d2cb764552ce0b678e"
+    },
+    {
+      "source": "work/task-runtime-tests/test_operation_flag_aggregation.py",
+      "destination": "tests/test_operation_flag_aggregation.py",
+      "source_sha256": "8e2934f252c71e5255a15f885b7ba0bd34534df4908b8304c3a3e06319d2055a",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "135041d16b85d0b0905bcff252fd1297e7dbb987a431e314175b4f4de2b7e3ed"
+    },
+    {
+      "source": "work/learning-tests/test_runtime_integration.py",
+      "destination": "tests/test_runtime_integration.py",
+      "source_sha256": "9e2237cee0a45dfa9658e5eb912258972f29624b356315300ca7be564eb4d8a4",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "104bb90879ebebc91fa9966bd68d78e41ac6f2ff04cc7dd55db6c60a66374507"
+    },
+    {
+      "source": "work/select-text68/test_select_text.py",
+      "destination": "tests/test_select_text.py",
+      "source_sha256": "54f29c424eb1812f1415d9b22c083a62c4e47b84298aae250e342f883f8454dd",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "32c467efaf86146fd1cc284ca06d0d08651726cf5c377bf6860a9822aeca31e6"
+    },
+    {
+      "source": "work/semantic-plan68/test_semantic_plans.py",
+      "destination": "tests/test_semantic_plans.py",
+      "source_sha256": "49e88fc9987bad819a37fbde518f7c4cf9b75020be66f2ed509bd73885305418",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "0eedb080356b748040f8b3c609613f0ec3d981d259b0f4d1848f3a1aea2e7ec1"
+    },
+    {
+      "source": "work/task-total70/test_send_runtime_classification.py",
+      "destination": "tests/test_send_runtime_classification.py",
+      "source_sha256": "0a4354a5fff71ccdcd5d77817c3f236ca72c82d1a5a8cf76162b337fdcbd7787",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "11b9c2f52aeb61abeb2e30370920f8442683e4aaab8021a657f762a05f0259cd"
+    },
+    {
+      "source": "work/learning-tests/test_source_read_guard.py",
+      "destination": "tests/test_source_read_guard.py",
+      "source_sha256": "c722988107ef50fda83ded9da829d55d60a9da9f4e2edcdbf33e963ae1a5dc40",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "de41d6c9f601df93d021696e148af666bb6c14ffbd2324e6766f4ed86ca8f5da"
+    },
+    {
+      "source": "work/task-total70/test_task_total.py",
+      "destination": "tests/test_task_total.py",
+      "source_sha256": "7985eda137d9c77cdd3876e243ad7ca45c20e49655765b6d07ec6a018b496bf0",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "7985eda137d9c77cdd3876e243ad7ca45c20e49655765b6d07ec6a018b496bf0"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_clear_outcome.py",
+      "destination": "tests/test_wechat_clear_outcome.py",
+      "source_sha256": "b9ee8769855c140659e0c348ad71173bd99bdf307345b89e797938463c6af349",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "b9ee8769855c140659e0c348ad71173bd99bdf307345b89e797938463c6af349"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_clear_prefix.py",
+      "destination": "tests/test_wechat_clear_prefix.py",
+      "source_sha256": "33cb61301554dd98928dbe520d6c460967927f7ef8d877fa54fed5d42c84e3f2",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "9d32ec1e3ce95118512b80f9b0ff86e3b50c3a90ff7acd18253088fab6b19624"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_draft_literal.py",
+      "destination": "tests/test_wechat_draft_literal.py",
+      "source_sha256": "f5e6cd7b28ae07a44b6cf9d523c289f850dcf0c06cbd492e2be6e752bd322bc2",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "f5e6cd7b28ae07a44b6cf9d523c289f850dcf0c06cbd492e2be6e752bd322bc2"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_empty_composer_hint.py",
+      "destination": "tests/test_wechat_empty_composer_hint.py",
+      "source_sha256": "36ceb30075f3d9349f86446ebdc0d2411ae1b60ffd98b2d934478b21c5577b7c",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaging_adaptation": "synthetic_window_and_voice_hint_geometry_no_live_record_import",
+      "packaged_sha256": "4edaaa7cc65ef1a613ef8d498dec26ebdb9d6237ec2be05d2662cd621d969078"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_file_transfer_function.py",
+      "destination": "tests/test_wechat_file_transfer_function.py",
+      "source_sha256": "68b8be1ca080d35b1f40880629da9fe5c6ee8e1d8ae508d55108ae4b9e47e747",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaging_adaptation": "synthetic_builtin_function_popup_no_live_record_import",
+      "packaged_sha256": "76fc573ec0bca93d6dc2e8a7f47d9aa6d04298339b1f5d26956a3bc4169e1bc0"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_focus_restore.py",
+      "destination": "tests/test_wechat_focus_restore.py",
+      "source_sha256": "1341433049b9c0e26b2917ec934ad34c99408d02312b4e8319c24cb3e20dc795",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "1341433049b9c0e26b2917ec934ad34c99408d02312b4e8319c24cb3e20dc795"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_header_geometry.py",
+      "destination": "tests/test_wechat_header_geometry.py",
+      "source_sha256": "5d499cfb0ca9651a48a25c26b0366ee7552b09cd0bae3e1dfd832f0930da9f61",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "b8a47d31190ba283e92fcaede64aca80248515ae8ed9635e9f5d242723bd9d03",
+      "packaging_adaptation": "anonymous_offline_fixture_aliases"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_post_action_reuse.py",
+      "destination": "tests/test_wechat_post_action_reuse.py",
+      "source_sha256": "052329a54702037d6edd934bd4b7dd96c3a815f47eb549465103b0c69a6562a2",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "052329a54702037d6edd934bd4b7dd96c3a815f47eb549465103b0c69a6562a2"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_reply_typing.py",
+      "destination": "tests/test_wechat_reply_typing.py",
+      "source_sha256": "cdf84c8f009ff4d148e799b92de772c992aa80dc1f89e58a954acc6a56b24f4e",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "591ebd2f395c29d6010141a75db2eb422c1ced8bbf13fde86b19ed2637c460d3",
+      "packaging_adaptation": "anonymous_offline_fixture_aliases"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_search_origin_restore.py",
+      "destination": "tests/test_wechat_search_origin_restore.py",
+      "source_sha256": "d8aab20764a2bebd976ea438a79872701dcdd50643f44363df4189b284d6cb46",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "d8aab20764a2bebd976ea438a79872701dcdd50643f44363df4189b284d6cb46"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_search_prefix.py",
+      "destination": "tests/test_wechat_search_prefix.py",
+      "source_sha256": "b6217408207f9a2c5e69ce730674a3c81df6451c00c450ada24160d52249c90f",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "6a7c8a9a1b07607528f586068d77a62fbd7b8183c30d5578534119326d3bd1e9",
+      "packaging_adaptation": "anonymous_offline_fixture_aliases"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_send_event_timing.py",
+      "destination": "tests/test_wechat_send_event_timing.py",
+      "source_sha256": "522cf0a7b4f6341bde79e112afe46f800d752cc3ec54eda8c406e8dda80d9db2",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "522cf0a7b4f6341bde79e112afe46f800d752cc3ec54eda8c406e8dda80d9db2"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_send_focus_reuse.py",
+      "destination": "tests/test_wechat_send_focus_reuse.py",
+      "source_sha256": "a083ba51248447141507d4030648550824bfd7ec8d219ab12d99eadea3452754",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "a083ba51248447141507d4030648550824bfd7ec8d219ab12d99eadea3452754"
+    },
+    {
+      "source": "work/chat-workflow-tests/test_wechat_takeover_start.py",
+      "destination": "tests/test_wechat_takeover_start.py",
+      "source_sha256": "aa6b74e690fb11a29dc8f38eab8307fd4a59faa94231725283235c25f880f6f1",
+      "origin": "offline_regression_fixture",
+      "adaptation": "repository_relative_paths",
+      "packaged_sha256": "aa6b74e690fb11a29dc8f38eab8307fd4a59faa94231725283235c25f880f6f1"
+    }
+  ],
+  "excluded": [
+    "native binaries",
+    "framework files",
+    "machine configuration",
+    "runtime data",
+    "live acceptance reports",
+    "raw logs",
+    "historical work",
+    "business invocation parameters"
+  ],
+  "note": "The final release may sync later source changes; copied files retain their source hashes before documented packaging/fixture adaptations.",
+  "excluded_private_fixture_dependencies": [
+    {
+      "file": "tests/test_wechat_details_panel.py",
+      "reason": "depends_on_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_wechat_navigation_recovery.py",
+      "reason": "depends_on_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_wechat_recent_scope.py",
+      "reason": "depends_on_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_wechat_search_name_icons.py",
+      "reason": "depends_on_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_wechat_composer1x.py",
+      "reason": "depends_on_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_chat_workflows.py",
+      "excluded_cases": [
+        "test_wechat_long_split_recent_probe_uses_literal_prefix_point_then_full_header",
+        "test_wechat_long_recent_prefix_ambiguity_stops_before_navigation_or_search",
+        "test_wechat_long_recent_probe_wrong_or_ambiguous_header_never_edits_or_replays",
+        "test_wechat_long_recent_prefix_requires_current_structure_and_complete_sidebar",
+        "test_wechat_actual_unicode_recent_ellipsis_uses_stable_literal_prefix_and_full_header",
+        "test_wechat_generic_bullet_or_merged_clock_is_not_recent_provisional_proof",
+        "test_wechat_unicode_recent_prefix_ambiguity_or_wrong_full_header_blocks_edits",
+        "test_actual_recent13_name_timestamp_preview_proves_public_account_row",
+        "test_wechat_blank_nonrecent_target_uses_proven_intermediate_then_normal_search",
+        "test_wechat_blank_observed_weak_first_row_uses_clear_weekday_chat_and_context_crop",
+        "test_wechat_blank_bootstrap_avoids_high_confidence_emoji_intermediate",
+        "test_wechat_blank_bootstrap_rechecks_label_reliability_before_one_click",
+        "test_wechat_blank_intermediate_requires_exact_new_header_without_replay",
+        "test_wechat_blank_intermediate_draft_is_preserved_without_search_or_delete",
+        "test_actual_wechat_most_used_local_row_excludes_history_network_and_background_duplicates",
+        "test_actual_wechat_most_used_person_locate_reports_unverified_kind_and_unique_actual_click",
+        "test_actual_history13_geometry_merges_exact_blocks_and_preserves_nonexact_rows",
+        "test_actual_feishu_history13_deduplicates_unique_shift_and_preserves_competing_reflow",
+        "test_feishu_actual_modal_input_settles_readonly_and_uses_fresh_focused_id",
+        "test_feishu_actual_known_hint_values_preserve_complete_literal_query"
+      ],
+      "reason": "requires_private_recorded_UI_fixture"
+    },
+    {
+      "file": "tests/test_chat_completion.py",
+      "excluded_cases": [
+        "test_current_target_locate_avoids_recent_ocr_and_closed_actual_search_avoids_full_panel"
+      ],
+      "reason": "requires_private_recorded_UI_fixture"
+    }
+  ],
+  "added_files": [
+    ".gitignore",
+    ".mcp.json",
+    "mcp.json",
+    "plugin.json",
+    "LICENSE",
+    "README.md",
+    "scripts/configure.py",
+    "scripts/run_tests.py",
+    "scripts/run_native_self_tests.py",
+    "tests/test_packaging.py"
+  ],
+  "test_scope": {
+    "retained": "synthetic fake-native and temporary SQLite regressions",
+    "private_recorded_UI_fixture_dependencies_excluded": true,
+    "live_acceptance_copied": false,
+    "native_compilation_performed_in_packaging": false,
+    "native_self_tests_run_in_packaging": false
+  },
+  "publication_files": [
+    ".codex-plugin/plugin.json",
+    ".gitignore",
+    ".mcp.json",
+    "LICENSE",
+    "README.md",
+    "SOURCE_MANIFEST.json",
+    "mcp.json",
+    "native/BackgroundChatEdit.swift",
+    "native/BackgroundInput.swift",
+    "native/NativeAXAttributes.swift",
+    "native/NativeInteraction.swift",
+    "native/NativeObservation.swift",
+    "native/NativeTextSelection.swift",
+    "native/NativeWindowCapture.swift",
+    "native/VisualDesktop.swift",
+    "native/build.sh",
+    "native/main.swift",
+    "plans/feishu-background-draft-owned-clear.json",
+    "plans/textedit-background-select-restore.json",
+    "plans/wechat-background-draft-owned-clear.json",
+    "plugin.json",
+    "scripts/chat_workflows.py",
+    "scripts/configure.py",
+    "scripts/daily_analysis.py",
+    "scripts/desktop_client.py",
+    "scripts/desktop_observation.py",
+    "scripts/desktop_transactions.py",
+    "scripts/learning_store.py",
+    "scripts/mcp_images.py",
+    "scripts/recipe_store.py",
+    "scripts/run_native_self_tests.py",
+    "scripts/run_tests.py",
+    "scripts/server.py",
+    "scripts/task_runtime.py",
+    "scripts/workflow_tools.py",
+    "skills/intel-desktop/SKILL.md",
+    "tests/test_background_chat_edit.py",
+    "tests/test_chat_completion.py",
+    "tests/test_chat_native_timings.py",
+    "tests/test_chat_workflows.py",
+    "tests/test_feishu_owned_search_cleanup.py",
+    "tests/test_generic_observation.py",
+    "tests/test_interruption_metadata.py",
+    "tests/test_learning_daily.py",
+    "tests/test_mcp_transactions.py",
+    "tests/test_menu_outcome.py",
+    "tests/test_model_observation.py",
+    "tests/test_native_task_context.py",
+    "tests/test_observation_projection.py",
+    "tests/test_operation_flag_aggregation.py",
+    "tests/test_packaging.py",
+    "tests/test_runtime_integration.py",
+    "tests/test_select_text.py",
+    "tests/test_semantic_plans.py",
+    "tests/test_send_runtime_classification.py",
+    "tests/test_source_read_guard.py",
+    "tests/test_task_total.py",
+    "tests/test_wechat_clear_outcome.py",
+    "tests/test_wechat_clear_prefix.py",
+    "tests/test_wechat_draft_literal.py",
+    "tests/test_wechat_empty_composer_hint.py",
+    "tests/test_wechat_file_transfer_function.py",
+    "tests/test_wechat_focus_restore.py",
+    "tests/test_wechat_header_geometry.py",
+    "tests/test_wechat_post_action_reuse.py",
+    "tests/test_wechat_reply_typing.py",
+    "tests/test_wechat_search_origin_restore.py",
+    "tests/test_wechat_search_prefix.py",
+    "tests/test_wechat_send_event_timing.py",
+    "tests/test_wechat_send_focus_reuse.py",
+    "tests/test_wechat_takeover_start.py"
+  ],
+  "packaging_validation": {
+    "offline_python_tests": 536,
+    "offline_python_result": "passed",
+    "fresh_stdio_initialize_and_tools_list": "passed_without_native_helper",
+    "tool_count": 27,
+    "configure_source_check": "passed",
+    "build_script_syntax_check": "passed",
+    "native_compilation_performed": false,
+    "native_self_test_binary_executed": false,
+    "GUI_actions_performed": false,
+    "user_configuration_modified": false,
+    "GitHub_actions_performed": false,
+    "prior_Send_selection_task_unit_modified": false,
+    "native_self_test_suites": [
+      "geometry",
+      "text-selection",
+      "focus-claim",
+      "submit-guards",
+      "native-interaction",
+      "visual",
+      "window-snapshot"
+    ],
+    "native_self_test_allowlist_review": "pure synthetic logic/images; no live capture or input"
+  },
+  "last_source_sync_utc": "2026-10-14T07:52:09.322561+00:00",
+  "package_frozen_utc": "2026-10-14T07:54:32.788195+00:00",
+  "validation": {
+    "python_offline_tests_passed": 536,
+    "native_build_succeeded": true,
+    "native_pure_suites_passed": 7,
+    "native_pure_cases_passed": 524,
+    "live_app_acceptance_claimed": false
+  }
+}

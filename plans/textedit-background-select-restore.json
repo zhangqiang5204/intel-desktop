@@ -1,0 +1,260 @@
+{
+  "format": "desktop_plan/v1",
+  "app": "com.apple.TextEdit",
+  "window_title": {
+    "$param": "window_title"
+  },
+  "parameter_names": [
+    "window_title",
+    "value",
+    "original_location",
+    "original_length",
+    "selected_length"
+  ],
+  "steps": [
+    {
+      "id": "before",
+      "tool": "inspect",
+      "arguments": {}
+    },
+    {
+      "id": "select",
+      "tool": "select_text",
+      "arguments": {
+        "background": true,
+        "element_id": {
+          "$element": {
+            "step": "before",
+            "role": "AXTextArea",
+            "ancestor": {
+              "role": "AXWindow",
+              "title": {
+                "$param": "window_title"
+              }
+            }
+          }
+        },
+        "text": {
+          "$param": "value"
+        },
+        "expected_value": {
+          "$param": "value"
+        },
+        "expected_selection": {
+          "location": {
+            "$param": "original_location"
+          },
+          "length": {
+            "$param": "original_length"
+          }
+        }
+      }
+    },
+    {
+      "id": "selected",
+      "tool": "inspect",
+      "arguments": {}
+    },
+    {
+      "id": "restore",
+      "tool": "select_text",
+      "arguments": {
+        "background": true,
+        "element_id": {
+          "$element": {
+            "step": "selected",
+            "role": "AXTextArea",
+            "ancestor": {
+              "role": "AXWindow",
+              "title": {
+                "$param": "window_title"
+              }
+            }
+          }
+        },
+        "range": {
+          "location": {
+            "$param": "original_location"
+          },
+          "length": {
+            "$param": "original_length"
+          }
+        },
+        "expected_value": {
+          "$param": "value"
+        },
+        "expected_selection": {
+          "location": 0,
+          "length": {
+            "$param": "selected_length"
+          }
+        }
+      }
+    },
+    {
+      "id": "after",
+      "tool": "inspect",
+      "arguments": {}
+    }
+  ],
+  "postconditions": [
+    {
+      "step": "before",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "value",
+      "equals": {
+        "$param": "value"
+      }
+    },
+    {
+      "step": "before",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "selected_range/location",
+      "equals": {
+        "$param": "original_location"
+      }
+    },
+    {
+      "step": "before",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "selected_range/length",
+      "equals": {
+        "$param": "original_length"
+      }
+    },
+    {
+      "step": "selected",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "value",
+      "equals": {
+        "$param": "value"
+      }
+    },
+    {
+      "step": "after",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "value",
+      "equals": {
+        "$param": "value"
+      }
+    },
+    {
+      "step": "after",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "selected_range/location",
+      "equals": {
+        "$param": "original_location"
+      }
+    },
+    {
+      "step": "after",
+      "element": {
+        "role": "AXTextArea",
+        "ancestor": {
+          "role": "AXWindow",
+          "title": {
+            "$param": "window_title"
+          }
+        }
+      },
+      "attribute": "selected_range/length",
+      "equals": {
+        "$param": "original_length"
+      }
+    },
+    {
+      "step": "select",
+      "path": "/result/selection_verified",
+      "equals": true
+    },
+    {
+      "step": "select",
+      "path": "/result/system_focus_preserved",
+      "equals": true
+    },
+    {
+      "step": "select",
+      "path": "/result/selection/location",
+      "equals": 0
+    },
+    {
+      "step": "select",
+      "path": "/result/selection/length",
+      "equals": {
+        "$param": "selected_length"
+      }
+    },
+    {
+      "step": "restore",
+      "path": "/result/selection_verified",
+      "equals": true
+    },
+    {
+      "step": "restore",
+      "path": "/result/system_focus_preserved",
+      "equals": true
+    },
+    {
+      "step": "restore",
+      "path": "/result/selection/location",
+      "equals": {
+        "$param": "original_location"
+      }
+    },
+    {
+      "step": "restore",
+      "path": "/result/selection/length",
+      "equals": {
+        "$param": "original_length"
+      }
+    }
+  ]
+}

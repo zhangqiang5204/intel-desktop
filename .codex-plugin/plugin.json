@@ -1,0 +1,16 @@
+{
+  "name": "intel-desktop",
+  "version": "0.1.70",
+  "description": "Fast native desktop control for Intel Macs: persistent Swift, AX, Unicode input, batches and multiple displays.",
+  "author": {
+    "name": "zhangqiang5204"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Intel Desktop",
+    "shortDescription": "原生 AX 点击、中文输入和批量操作",
+    "brandColor": "#2563EB"
+  },
+  "requires_local_executor": true
+}

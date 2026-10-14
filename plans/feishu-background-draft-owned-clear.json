@@ -1,0 +1,168 @@
+{
+  "format": "desktop_plan/v1",
+  "app": "com.bytedance.macos.feishu",
+  "window_title": "飞书",
+  "parameter_names": [
+    "chat",
+    "text"
+  ],
+  "steps": [
+    {
+      "id": "before",
+      "tool": "observe",
+      "arguments": {
+        "chat": {
+          "$param": "chat"
+        },
+        "max_text_rows": 100,
+        "max_depth": 40,
+        "max_nodes": 2000,
+        "include_raw_state": true
+      }
+    },
+    {
+      "id": "draft",
+      "tool": "chat",
+      "arguments": {
+        "action": "draft",
+        "background": true,
+        "chat": {
+          "$param": "chat"
+        },
+        "text": {
+          "$param": "text"
+        }
+      }
+    },
+    {
+      "id": "after_draft",
+      "tool": "observe",
+      "arguments": {
+        "chat": {
+          "$param": "chat"
+        },
+        "max_text_rows": 100,
+        "max_depth": 40,
+        "max_nodes": 2000,
+        "include_raw_state": true
+      }
+    },
+    {
+      "id": "clear_owned",
+      "tool": "chat",
+      "arguments": {
+        "action": "clear",
+        "background": true,
+        "chat": {
+          "$param": "chat"
+        },
+        "expected_draft": {
+          "$param": "text"
+        }
+      }
+    },
+    {
+      "id": "after_clear",
+      "tool": "observe",
+      "arguments": {
+        "chat": {
+          "$param": "chat"
+        },
+        "max_text_rows": 100,
+        "max_depth": 40,
+        "max_nodes": 2000,
+        "include_raw_state": true
+      }
+    }
+  ],
+  "postconditions": [
+    {
+      "step": "before",
+      "path": "/result/recipient_verified",
+      "equals": true
+    },
+    {
+      "step": "before",
+      "path": "/result/chat_title",
+      "equals": {
+        "$param": "chat"
+      }
+    },
+    {
+      "step": "before",
+      "path": "/result/composer/draft",
+      "equals": ""
+    },
+    {
+      "step": "after_draft",
+      "path": "/result/recipient_verified",
+      "equals": true
+    },
+    {
+      "step": "after_draft",
+      "path": "/result/chat_title",
+      "equals": {
+        "$param": "chat"
+      }
+    },
+    {
+      "step": "after_draft",
+      "path": "/result/composer/draft",
+      "equals": {
+        "$param": "text"
+      }
+    },
+    {
+      "step": "after_clear",
+      "path": "/result/recipient_verified",
+      "equals": true
+    },
+    {
+      "step": "after_clear",
+      "path": "/result/chat_title",
+      "equals": {
+        "$param": "chat"
+      }
+    },
+    {
+      "step": "after_clear",
+      "path": "/result/composer/draft",
+      "equals": ""
+    },
+    {
+      "step": "draft",
+      "path": "/result/focus_isolated",
+      "equals": true
+    },
+    {
+      "step": "draft",
+      "path": "/result/activated_foreground",
+      "equals": false
+    },
+    {
+      "step": "draft",
+      "path": "/result/sent",
+      "equals": false
+    },
+    {
+      "step": "clear_owned",
+      "path": "/result/focus_isolated",
+      "equals": true
+    },
+    {
+      "step": "clear_owned",
+      "path": "/result/activated_foreground",
+      "equals": false
+    },
+    {
+      "step": "clear_owned",
+      "path": "/result/sent",
+      "equals": false
+    },
+    {
+      "step": "before",
+      "path": "/result/focus_attempted",
+      "equals": false
+    }
+  ]
+}
