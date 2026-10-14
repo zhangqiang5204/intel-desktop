@@ -34,7 +34,8 @@ python3 scripts/configure.py --format toml
 
 ```bash
 python3 scripts/run_tests.py
-python3 scripts/run_native_self_tests.py --list
+python3 scripts/run_native_self_tests.py
+python3 scripts/run_capture_connection_tests.py --list
 # 以下命令仅在完成 native build 后运行纯 native 自测试：
 python3 scripts/run_native_self_tests.py
 ```
@@ -50,7 +51,11 @@ Python 测试使用 fake native 和临时 SQLite，不打开应用、不发送�
 
 这两个数据点不代表普遍性能保证。最新 continuous-input 候选尚未实机验收，不能宣称发送延迟已解决；TextEdit 对话框连续操作及切换前提示已按上方范围实机通过，其他应用仍需按真实结果判断。仓库不收录本机验收正文、原始日志、runtime 数据、用户配置或历史工作文件。
 
-截图流只在同一队列操作内复用。操作成功、失败或取消后，先等待本次流停止，再释放跨会话队列。两轮实机只读验收均确认：操作内 1 条流，结束后立即 0 条流；完整草稿和会话一致、无输入事件。60 秒空闲定时器仅作异常退出时的后备释放。已打开的旧 MCP 进程保留原先代码，新会话加载当前安装代码。
+截图流只在同一队列操作内复用。操作成功、失败或取消后，先等待本次流停止，再释放跨会话队列。两轮实机只读验收均确认：操作内 1 条流，结束后立即 0 条流；完整草稿和会话一致、无输入事件。60 秒空闲定时器仅作异常退出时的后备释放。冷启动若返回已观察到的 `-3805` 连接中断，只允许在原截止时间内重新核验目标后重建一次截图；不重试输入、超时或其他错误。已打开的旧 MCP 进程保留原先代码，新会话加载当前安装代码。
+
+飞书前台聊天流程在关闭已有搜索窗后沿用首次 claim，避免把原归还目标覆盖成飞书自身；业务结果未知仍只请求一次原生安全归还。业务完成但归还未证实时返回 `ok:false`、`scope_completed:false`，保留已验证草稿或 Send 证据，不重放。实机焦点验收覆盖正常返回、注入业务未知后的返回，均回到原应用确切窗口且无聊天输入；完整 MCP `read` 流程实测 2.33 秒、`focus_lifecycle:restored`。558 项 Python 回归、524 项原生纯检查及 7 项捕获连接故障注入检查通过。
+
+已有会话不会自动重新加载本地 Python 代码；当前 `desktop_status` 返回 `plugin_runtime_features`。旧连接缺少该元数据时，当前任务可以使用随包 `desktop_client.py` 打开新标准 MCP 连接，不能重放旧操作。微信系统录屏指示仍须独立核实；本 helper 的活跃流为零不能证明同一启动器下所有捕获都已结束。
 
 ## English
 

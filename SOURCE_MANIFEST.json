@@ -65,17 +65,17 @@
     {
       "source": "native/NativeWindowCapture.swift",
       "destination": "native/NativeWindowCapture.swift",
-      "source_sha256": "39ecc26ad80b8e4c47e32d8f76a08ef483cf2bbb75a4b6c87bf20a7a4011103a",
+      "source_sha256": "d67fb258456c337acd2a50724d0a19b3ee18dd93a762168f7ada2207d1cef5c5",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "39ecc26ad80b8e4c47e32d8f76a08ef483cf2bbb75a4b6c87bf20a7a4011103a",
+      "packaged_sha256": "d67fb258456c337acd2a50724d0a19b3ee18dd93a762168f7ada2207d1cef5c5",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
       "source": "native/VisualDesktop.swift",
       "destination": "native/VisualDesktop.swift",
-      "source_sha256": "84b875e4a0000ebd0e3478d9d01dfb1d2b2511eb3c656a7464ff004ad710175b",
+      "source_sha256": "ff18aa1990736e0f2923199371da36962a144390f03e32360bfa60c0833638d6",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "84b875e4a0000ebd0e3478d9d01dfb1d2b2511eb3c656a7464ff004ad710175b",
+      "packaged_sha256": "ff18aa1990736e0f2923199371da36962a144390f03e32360bfa60c0833638d6",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
@@ -120,9 +120,9 @@
     {
       "source": "scripts/chat_workflows.py",
       "destination": "scripts/chat_workflows.py",
-      "source_sha256": "9689ecedb3ea9ebfcfdfe749d66b8d3935cafa827fbc18ace53a96e30cd1426d",
+      "source_sha256": "35971591abab866ca26f87ad3bae59e6fe6cca46e6e7ce5669bd8ef7db57b12f",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "9689ecedb3ea9ebfcfdfe749d66b8d3935cafa827fbc18ace53a96e30cd1426d"
+      "packaged_sha256": "35971591abab866ca26f87ad3bae59e6fe6cca46e6e7ce5669bd8ef7db57b12f"
     },
     {
       "source": "scripts/daily_analysis.py",
@@ -180,33 +180,33 @@
     {
       "source": "scripts/server.py",
       "destination": "scripts/server.py",
-      "source_sha256": "d9f19c481ad7b0513e3c3152ba9331fc17ec9df35188449e782740ab76a60262",
+      "source_sha256": "17b891615d4ef8c77ceb2e99e1bf5a23ee44f3384f21a210307123fb3ba46a2c",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "d9f19c481ad7b0513e3c3152ba9331fc17ec9df35188449e782740ab76a60262",
+      "packaged_sha256": "17b891615d4ef8c77ceb2e99e1bf5a23ee44f3384f21a210307123fb3ba46a2c",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
       "packaging_adaptation": "parent_synced_current_general_observation_and_model_instructions"
     },
     {
       "source": "scripts/task_runtime.py",
       "destination": "scripts/task_runtime.py",
-      "source_sha256": "f21425144d5d5ab71970fa5cfef8cd9f658e61100bc2fcfe45c482f927521462",
+      "source_sha256": "8d9a987dd49a76be49494253bc71f008dcc6883d53da9992fdf0c6231a2b07d9",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "f21425144d5d5ab71970fa5cfef8cd9f658e61100bc2fcfe45c482f927521462"
+      "packaged_sha256": "8d9a987dd49a76be49494253bc71f008dcc6883d53da9992fdf0c6231a2b07d9"
     },
     {
       "source": "scripts/workflow_tools.py",
       "destination": "scripts/workflow_tools.py",
-      "source_sha256": "da6fef2c546a3fd591a2024122b4995630010141e28887a5b19b1c0f1ddb79f9",
+      "source_sha256": "32b2be40e1912450cc45f40bd9152db12196ceff345669f250223296d1e275be",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "da6fef2c546a3fd591a2024122b4995630010141e28887a5b19b1c0f1ddb79f9"
+      "packaged_sha256": "32b2be40e1912450cc45f40bd9152db12196ceff345669f250223296d1e275be"
     },
     {
       "source": "skills/intel-desktop/SKILL.md",
       "destination": "skills/intel-desktop/SKILL.md",
-      "source_sha256": "190b086d9491f3532bbabbd38ed4fdfe16f54d1b51cc7d27f82460ce5b3c5155",
+      "source_sha256": "6627c6aa2de2c5ccc045a873fa24d47fb23956e0ccb226d462584db106c62877",
       "origin": "plugin_source_snapshot",
       "packaging_adaptation": "accurate_script_run_vs_management_timing_and_public_README_link",
-      "packaged_sha256": "190b086d9491f3532bbabbd38ed4fdfe16f54d1b51cc7d27f82460ce5b3c5155",
+      "packaged_sha256": "6627c6aa2de2c5ccc045a873fa24d47fb23956e0ccb226d462584db106c62877",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
@@ -240,7 +240,7 @@
       "origin": "offline_regression_fixture",
       "adaptation": "repository_relative_paths_private_recorded_fixture_cases_excluded",
       "public_fixture_substitution": true,
-      "packaged_sha256": "5d6a469510ce1693eb585ce000b6fa12aa97d2537eca8541b1ede3f548f76dab",
+      "packaged_sha256": "5cb9bc18dd887f7bde4c2f3c2432cdc393b4c46085fa8652701c8e2260d4aa09",
       "packaging_adaptation": "anonymous_offline_fixture_aliases"
     },
     {
@@ -250,7 +250,7 @@
       "origin": "offline_regression_fixture",
       "adaptation": "repository_relative_paths",
       "packaging_adaptation": "synthetic_modal_fixture_no_live_record_import",
-      "packaged_sha256": "9e50f83fd432a22af68e153a8ecf97624d8984734a37bcdc3f0adf95ac4a2f20"
+      "packaged_sha256": "0035de90190674f0a541139ab83f34ed3b479bdc410c40a2caf030d91e16eeba"
     },
     {
       "source": "parent_authored_public_test",
@@ -496,6 +496,20 @@
       "source_sha256": "368a6eb7a9a82a13160229807b72f655c395db1e45d3e8b0097dd6d5e5b68d36",
       "packaged_sha256": "368a6eb7a9a82a13160229807b72f655c395db1e45d3e8b0097dd6d5e5b68d36",
       "origin": "plugin_source_snapshot"
+    },
+    {
+      "source": "scripts/run_capture_connection_tests.py",
+      "destination": "scripts/run_capture_connection_tests.py",
+      "source_sha256": "ab4647958b1929e78ef147be0e0638262e59bf6b8162af98eba2f9c5faf3e498",
+      "packaged_sha256": "ab4647958b1929e78ef147be0e0638262e59bf6b8162af98eba2f9c5faf3e498",
+      "origin": "plugin_source_snapshot"
+    },
+    {
+      "source": "tests/test_feishu_focus_restore.py",
+      "destination": "tests/test_feishu_focus_restore.py",
+      "source_sha256": "111ee7b3bb36d5c772918c6dc80b89b4e3e88d797b561813207e3bdc3a5796d0",
+      "packaged_sha256": "111ee7b3bb36d5c772918c6dc80b89b4e3e88d797b561813207e3bdc3a5796d0",
+      "origin": "plugin_source_snapshot"
     }
   ],
   "excluded": [
@@ -680,18 +694,21 @@
     ],
     "native_self_test_allowlist_review": "pure synthetic logic/images; no live capture or input"
   },
-  "last_source_sync_utc": "2026-10-14T10:18:58.562538+00:00",
+  "last_source_sync_utc": "2026-10-14T12:46:50.540588+00:00",
   "package_frozen_utc": "2026-10-14T10:18:58.562538+00:00",
   "validation": {
-    "python_offline_tests_passed": 540,
+    "python_offline_tests_passed": 558,
     "native_build_succeeded": true,
     "native_pure_suites_passed": 7,
     "native_pure_cases_passed": 524,
-    "live_app_acceptance_claimed": false
+    "live_app_acceptance_claimed": false,
+    "capture_connection_injected_cases_passed": 7
   },
   "live_validation_scope": {
     "capture_stream_lifecycle": "two real read-only operations: in-operation streams=1; after-operation streams=0; no HID; same complete draft",
     "textedit_native_open_panel": "fresh Open-window inspect and Cancel, same owned full value and restored original focus",
-    "send_performance": "A/B measured; continuous-submit candidate still not accepted"
+    "send_performance": "A/B measured; continuous-submit candidate still not accepted",
+    "feishu_focus_return": "normal and injected business-unknown focus-only stages plus full MCP read; exact previous window verified; no chat input",
+    "system_recording_indicator": "Control Center attributes active recording to codex-taskboard-launcher; ending this broader session requires user authorization"
   }
 }

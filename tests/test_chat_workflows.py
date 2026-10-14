@@ -327,6 +327,11 @@ class FeishuFake:
                 result["windows"] += main["windows"]
                 result["elements"] += main["elements"]
         elif command == "focus":
+            if request.get("restore_previous"):
+                return {"ok": True, "result": {"focus_restored": True,
+                    "focus_restore_attempted": True, "restore_reason": "previous_window_verified",
+                    "focus_restored_app": True, "window_verified": True,
+                    "restore_scope": "exact_window", "previous_focus_scope": "exact_window", "events_posted": 0}}
             if self.modal and request["window_title"] != SEARCH_MODAL:
                 return {"ok": False, "error": {"code": "window_mismatch", "message": "Known search modal is focused"}}
             result = {"target_pid": self.pid, "foreground_verified": True, "window_title": request["window_title"]}
@@ -1612,7 +1617,8 @@ class ChatTests(unittest.TestCase):
         result = self.assert_ok(self.run_chat(fake, "read"))
         self.assertEqual(result["visible_text"], "新消息\n最后回复")
         self.assertEqual([c["key"] for c in fake.calls if c["command"] == "key"], ["escape"])
-        self.assertEqual([c["window_title"] for c in fake.calls if c["command"] == "focus" and not c.get("restore_previous")], [SEARCH_MODAL, "飞书"])
+        self.assertEqual([c["window_title"] for c in fake.calls if c["command"] == "focus" and not c.get("restore_previous")], [SEARCH_MODAL])
+        self.assertTrue(fake.calls[-1].get("restore_previous"))
         self.assertTrue(fake.calls[-1].get("restore_previous"))
 
     def test_recipe_autorecord_has_no_chat_or_native_content(self):

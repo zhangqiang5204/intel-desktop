@@ -32,7 +32,8 @@ FLAGS = {"proof_full_value", "proof_same_target", "focus_verified", "proof_focus
          "foreground_preserved", "system_focus_preserved", "postcondition_verified",
          "precondition_verified", "recipient_verified", "draft_verified", "value_verified",
          "operation_verified", "response_verified", "target_verified", "empty_verified",
-         "capture_scope_released", "input_may_be_partial", "temporary_clipboard_used", "clipboard_restored",
+         "capture_scope_released", "focus_return_required", "focus_claim_verified", "focus_restore_requested",
+         "business_completed", "scope_completed", "focus_restored", "focus_yielded_to_user", "focus_return_unverified", "input_may_be_partial", "temporary_clipboard_used", "clipboard_restored",
          "clipboard_external_change", "clipboard_isolated"}
 _LOCAL = threading.local()
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
@@ -80,7 +81,8 @@ def _flags(values):
 def _merge_operation_flags(previous, current):
     """Keep occurred effects across steps; final postcondition flags stay latest."""
     merged, current = _flags(previous), _flags(current)
-    occurred = {"capture_scope_released", "input_may_be_partial", "temporary_clipboard_used", "clipboard_external_change"}
+    occurred = {"capture_scope_released", "focus_return_required", "focus_claim_verified", "focus_restore_requested",
+         "business_completed", "scope_completed", "focus_restored", "focus_yielded_to_user", "focus_return_unverified", "input_may_be_partial", "temporary_clipboard_used", "clipboard_external_change"}
     for key, value in current.items():
         if key in occurred:
             merged[key] = merged.get(key, False) or value

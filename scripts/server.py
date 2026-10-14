@@ -522,6 +522,7 @@ def handle(req):
         response=managed_call(cmd,arguments)
         if cmd == 'status' and response.get('ok'):
             response['result']['plugin_version'] = '0.1.70'
+            response['result']['plugin_runtime_features'] = {'guarded_focus_return': 2, 'operation_scoped_capture': True}
         response['bridge_elapsed_ms'] = round((time.perf_counter() - started) * 1000, 3)
         content = mcp_content(response)
         if any(block['type'] == 'image' for block in content['content']):

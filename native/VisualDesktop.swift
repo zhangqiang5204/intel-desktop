@@ -2538,9 +2538,12 @@ final class VisualDesktop {
                         overlay: VisualSearchOverlay? = nil, auxiliaries: [VisualScreenWindow] = [],
                         check: () throws -> Void, poll: () throws -> Void) throws -> VisualWarmCapture {
         latestWarmEvidence = nil
-        let captured = try visualWarmWindowCapture(selected: selected, title: target.expectedTitle, plan: plan,
-            overlay: overlay, auxiliaries: auxiliaries, deadline: deadline, check: check, poll: poll)
+        let (captured, restarted) = try visualCaptureConnectionRecovery(deadline: deadline, check: check) {
+            try visualWarmWindowCapture(selected: selected, title: target.expectedTitle, plan: plan,
+                overlay: overlay, auxiliaries: auxiliaries, deadline: deadline, check: check, poll: poll)
+        }
         latestWarmEvidence = captured.evidence
+        latestWarmEvidence?["capture_connection_restarted_once"] = restarted
         latestWarmEvidence?["wait_poll_checks"] = backgroundReadOnly ? "read_only_no_shared_HID_dependency" : "input_monitor_only_no_input_performed"
         return captured
     }

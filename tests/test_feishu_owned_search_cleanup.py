@@ -61,6 +61,9 @@ class OwnedSearchFake(FeishuFake):
         command = request["command"]
         if command == "focus" and request.get("restore_previous"):
             self.calls.append(copy.deepcopy(request))
+            if self.modal and not self.claimed_modal:
+                return {"ok": True, "result": {"focus_restored": False, "focus_restore_attempted": False,
+                    "restore_reason": "task_focus_changed", "events_posted": 0}}
             return {"ok": True, "result": {"focus_restored": True, "focus_restore_attempted": True,
                 "restore_reason": "previous_window_verified", "focus_restored_app": True,
                 "window_verified": True, "window_unknown": False, "restore_scope": "exact_window",

@@ -400,6 +400,22 @@ def _focus_receipt(value):
     return result
 
 
+def _focus_claim_receipt(value):
+    """Keep the first claim's bounded handoff facts, without origin identities."""
+    result = {}
+    for key in ("previous_focus_recorded", "handoff_notice_shown", "continuous_task_focus_claim"):
+        if type(value.get(key)) is bool:
+            result[key] = value[key]
+    if value.get("previous_focus_scope") in {"app_only", "exact_window", "unavailable"}:
+        result["previous_focus_scope"] = value["previous_focus_scope"]
+    waited = value.get("handoff_wait_ms")
+    if type(waited) in {int, float} and math.isfinite(waited) and 0 <= waited <= 5000:
+        result["handoff_wait_ms"] = waited
+    if value.get("takeover_baseline") == "before_target_activation":
+        result["takeover_baseline"] = value["takeover_baseline"]
+    return result
+
+
 class ChatSession:
     def __init__(self, request, invoke):
         self.request, self.invoke = request, invoke
@@ -423,6 +439,9 @@ class ChatSession:
         self.edited_value = None
         self.edited_input_receipt = None
         self.focus_attempted = False
+        self.focus_claim_verified = False
+        self.focus_claim_receipt = {}
+        self.focus_restore_requested = False
         self.details_close_attempted = False
         self.owned_feishu_search = None
         self.navigation_recovery = None
@@ -490,25 +509,38 @@ class ChatSession:
             if self.pid is not None and actual != self.pid:
                 raise Stopped("target_changed", "The running application's PID changed; no further actions")
             self.pid = actual
+        if command == "focus" and not restoring and value.get("foreground_verified") is True:
+            if not self.focus_claim_verified:
+                self.focus_claim_receipt = _focus_claim_receipt(value)
+            self.focus_claim_verified = True
         return value
 
     def finish_focus(self, error=None):
         if not self.focus_attempted:
             return {}
+        # Uncertain business input never authorizes replay or cleanup. It also
+        # need not strand a Feishu foreground claim (including a lost claim
+        # receipt): the native owner alone decides whether the saved origin is
+        # still safe to restore.
+        guarded_feishu_return = self.app == FEISHU
         details = error.details if error and isinstance(error.details, dict) else {}
-        if error and self.clear_recovery is not None and self.clear_recovery.get("verified") is not True:
+        clear_stop = self.clear_recovery.get("stop_code") if self.clear_recovery else None
+        if error and clear_stop in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed"}:
+            return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": clear_stop}
+        if error and self.clear_recovery is not None and self.clear_recovery.get("verified") is not True and not guarded_feishu_return:
             return {"focus_restored": False, "focus_restore_attempted": False,
                     "restore_reason": self.clear_recovery.get("stop_code", "clear_outcome_unverified")}
         recovery_stop = details.get("navigation_recovery_stop_code")
         if error and recovery_stop in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed",
                                        "navigation_identity_unverified", "navigation_focus_unverified"}:
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": recovery_stop}
-        if error and (error.code in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed", "draft_changed"}
+        if error and (error.code in {"user_interrupted", "foreground_mismatch", "foreground_unverified", "target_changed", "target_geometry_changed"}
+                      or error.code == "draft_changed" and not guarded_feishu_return
                       or error.code == "visual_target_changed" and details.get("navigation_only") is not True and details.get("safe_origin_restore") is not True):
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": error.code}
         unknown = {"native_transport_error", "native_protocol_error", "operation_completion_unknown", "send_state_unknown", "draft_unverified", "clear_unverified", "prefix_clear_unverified"}
         safe_restore = details.get("navigation_only") is True or details.get("safe_origin_restore") is True or (details.get("delete_events_posted") == 0 and error and error.code in {"prefix_caret_unverified", "prefix_grapheme_boundary_unverified"})
-        if error and (error.code in unknown or details.get("input_may_be_partial") is True and not safe_restore):
+        if error and not guarded_feishu_return and (error.code in unknown or details.get("input_may_be_partial") is True and not safe_restore):
             return {"focus_restored": False, "focus_restore_attempted": False, "restore_reason": "unknown_input_outcome"}
         cleanup = {}
         if error and error.code in {"target_not_found", "ambiguous_target"} and self.owned_feishu_search:
@@ -517,14 +549,19 @@ class ChatSession:
                 return {"focus_restored": False, "focus_restore_attempted": False,
                         "restore_reason": "owned_search_cleanup_unverified", **cleanup}
         try:
+            self.focus_restore_requested = True
             restored = self.call("focus", restore_previous=True)
         except Stopped as failure:
             # A focus restoration cannot invalidate already verified business
             # evidence or justify replaying typing/deletion/submission.
-            return {"focus_restored": False, "focus_restore_attempted": True, "restore_reason": failure.code, **_focus_receipt(failure.details), **cleanup}
+            attempted = failure.details.get("focus_restore_attempted")
+            if type(attempted) is not bool:
+                attempted = None if self.app == FEISHU else True
+            return {"focus_restored": False, "focus_restore_requested": True, "focus_restore_attempted": attempted,
+                    "restore_reason": failure.code, **_focus_receipt(failure.details), **cleanup}
         verified = restored.get("focus_restored") is True
         reason = restored.get("restore_reason")
-        return {"focus_restored": verified, "focus_restore_attempted": restored.get("focus_restore_attempted") is True,
+        return {"focus_restored": verified, "focus_restore_requested": True, "focus_restore_attempted": restored.get("focus_restore_attempted") is True,
                 "restore_reason": reason[:256] if isinstance(reason, str) else "restored" if verified else "restore_unverified", **_focus_receipt(restored), **cleanup}
 
     def status(self, strict=False, ignore_prior_interruption=False):
@@ -591,6 +628,11 @@ class ChatSession:
                 self.call("key", key="escape")
                 tree, _ = self.feishu_wait_search_modal(opened=False)
                 self.target, self.frame = main_target, main_frame
+                # Escape returned our modal to its verified main window. A new
+                # focus claim here can overwrite the external origin with
+                # Feishu itself. Continue this atomic stage via fresh reads;
+                # native finalization adopts only its exact owned navigation.
+                return self.feishu_message_pane(self.feishu_read())
         result = self.call("focus")
         if result.get("foreground_verified") is not True:
             raise Stopped("foreground_unverified", "Native focus was not verified")
@@ -2569,7 +2611,10 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
         result = session.run()
         answer = {"ok": True, "result": result}
         outcome_error = None
-    except Stopped as error:
+    except Exception as failure:
+        error = failure if isinstance(failure, Stopped) else Stopped(
+            "operation_completion_unknown", "Chat completion is unknown; no automatic replay",
+            {"exception_type": type(failure).__name__})
         outcome_error = error
         sent = True if session and session.send_verified else None if session and session.submit_started else False
         if session and session.submit_started and not session.submit_posted and (error.details.get("submit_events_posted") is False or error.details.get("events_posted") == 0):
@@ -2580,8 +2625,38 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
             answer["submission_state"] = "observed_in_chat" if session.send_verified else "not_posted" if sent is False else "unknown"
     finally:
         if session:
-            restoration = session.finish_focus(outcome_error)
+            try:
+                restoration = session.finish_focus(outcome_error)
+            except Exception as failure:
+                restoration = {"focus_restored": False, "focus_restore_attempted": None,
+                               "restore_reason": "focus_finalization_unknown",
+                               "focus_finalization_exception_type": type(failure).__name__}
     answer.update(restoration)
+    if session and session.app == FEISHU and session.focus_attempted:
+        business_completed = answer["ok"]
+        restored = restoration.get("focus_restored") is True
+        yielded = restoration.get("restore_reason") in {"user_interrupted", "user_takeover", "new_user_activity"}
+        answer.update(focus_claim_verified=session.focus_claim_verified,
+                      focus_claim_receipt=session.focus_claim_receipt,
+                      focus_return_required=session.focus_claim_verified or session.focus_restore_requested,
+                      focus_restore_requested=session.focus_restore_requested,
+                      focus_lifecycle="restored" if restored else "yielded_to_user" if yielded else "unverified",
+                      business_completed=business_completed, scope_completed=business_completed and restored)
+        if isinstance(answer.get("result"), dict):
+            answer["result"].update(restoration)
+        if business_completed and not restored:
+            # The business proof remains valid, but the full foreground scope
+            # did not finish. Expose that failure instead of silently returning
+            # ok from a native ok:true/restored:false receipt. Never replay.
+            answer.update(ok=False, automatic_replay_allowed=False,
+                          error={"code": "user_interrupted" if yielded else "focus_restore_unverified",
+                                 "message": "Business completed; focus yielded to the user" if yielded else "Business completed; the saved focus return is unverified. Do not replay input or reclaim focus",
+                                 "details": {"business_completed": True, "focus_return_required": True,
+                                             "restore_reason": restoration.get("restore_reason", "restore_unverified")}})
+            if session.submit_started:
+                answer.update(sent=True if session.send_verified else answer["result"].get("sent"),
+                              send_verified=session.send_verified,
+                              submission_state=answer["result"].get("submission_state", "unknown"))
     elapsed = round((time.monotonic() - started) * 1000, 3)
     answer["elapsed_ms"] = elapsed
     if session:

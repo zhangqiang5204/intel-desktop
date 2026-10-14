@@ -31,6 +31,11 @@ def runtime_arguments(arguments,runtime):
  return args,meta
 
 def classify_result(command,args,response,context):
+ lifecycle=response.get('focus_lifecycle')
+ if lifecycle in {'restored','yielded_to_user','unverified'}:
+  metadata={k:response[k] for k in ('focus_return_required','focus_claim_verified','focus_restore_requested','business_completed','scope_completed') if type(response.get(k)) is bool}
+  metadata.update(focus_restored=lifecycle=='restored',focus_yielded_to_user=lifecycle=='yielded_to_user',focus_return_unverified=lifecycle=='unverified')
+  context.record_phase('postcondition','focus_lifecycle',verified_flags=metadata)
  if context._outcome is not None:return
  if not response.get('ok'):
   error=response.get('error',{});code=error.get('code','operation_failed');details=error.get('details',{})

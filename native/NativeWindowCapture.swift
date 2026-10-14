@@ -36,6 +36,24 @@ private enum VisualWarmCaptureStage: String {
     case completedTargetFrame = "completed_target_frame"
 }
 
+// The observed cold-start connection interruption occurs before a frame or
+// input. Retry capture once, under the original deadline and fresh guards;
+// never retry an input action, timeout, changed target or other OS error.
+@inline(never)
+func visualCaptureConnectionRecovery<T>(deadline: Double,
+    now: () -> Double = { ProcessInfo.processInfo.systemUptime },
+    check: () throws -> Void, capture: () throws -> T) throws -> (T, Bool) {
+    do { return (try capture(), false) }
+    catch let error as HelperError {
+        guard error.details["capture_error_domain"] as? String == SCStreamErrorDomain,
+              error.details["capture_error_code"] as? Int == -3805,
+              error.details["capture_stage"] as? String == "starting_app_filter",
+              now() < deadline else { throw error }
+        try check()
+        return (try capture(), true)
+    }
+}
+
 // Each request owns a fresh exact-filter update epoch, even when its strictly
 // bound streams are reused. A cold stream first primes the app filter; an
 // already committed identical exact filter need not leave its target scope.
@@ -475,7 +493,7 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
             let box = VisualCompletion<Bool>(); stream.updateContentFilter(filter) { error in box.complete(error.map { .failure($0) } ?? .success(true)) }; return box
         }
         try awaitAll(primes)
-        // Prime only an already-running, identical binding. These samples are
+        // Prime only this already-running, identically bound session. These samples are
         // discarded; the separate exact-filter epoch below is the sole source
         // of readable pixels. No app-only sample authorizes input or output.
         while !zip(outputs, primeBoundaries).allSatisfy({ pair in pair.0.discardedComplete(after: pair.1) }) {
@@ -528,8 +546,8 @@ func visualWarmWindowCapture(selected: VisualIdentity, title: String?, plan: Vis
             throw fail("visual_capture_failed", "Window-filter stream stopped", details)
         }
         if states.allSatisfy({ $0.0 != nil && $0.1 != nil }) { break }
-        if refreshCommittedExact, !readReprimed, ProcessInfo.processInfo.systemUptime - completeAwaitStarted >= 0.200 {
-            // A same-filter update can be a no-op on static Qt content (seen
+        if !readReprimed, ProcessInfo.processInfo.systemUptime - completeAwaitStarted >= 0.200 {
+            // A first or same-filter update can be a no-op on static Qt content (seen
             // on the mixed-scale seam). After two 10fps frame intervals, use
             // the proven read-only app→exact transition once. Every fragment
             // starts a new epoch; no partial/old pixels or input are replayed.
