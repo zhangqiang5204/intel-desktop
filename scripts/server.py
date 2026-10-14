@@ -191,6 +191,29 @@ class NativeBridge:
             response['execution'] = envelope['summary']
             return response
         self.start()
+        if cmd in {'visual_read', 'background_visual_read', 'visual_click', 'visual_key',
+                   'visual_type_text', 'visual_scroll', 'background_type_text', 'batch'}:
+            process = self.process
+            context.on_finish(self, lambda: self._finish_capture_scope(context, process))
+        return self._exchange(cmd, args, context)
+
+    def _finish_capture_scope(self, context, process):
+        if self.process is not process or process.poll() is not None:
+            return
+        row = context.runtime.get_operation(context.operation_id, include_summary=False)
+        if row['native_pending']:
+            # The prior action has no known completion boundary. Do not append
+            # another native command; the existing runtime retains its lease.
+            return
+        try:
+            response = self._exchange('_finish_operation', {}, context)
+            if not response.get('ok') or response.get('result', {}).get('capture_scope_released') is not True:
+                raise RuntimeError('Native capture scope did not finish')
+        except Exception:
+            self.close()  # Only this bridge's child; no unrelated session.
+            raise
+
+    def _exchange(self, cmd, args, context):
         self.seq += 1
         request = {**{k: v for k, v in args.items() if k != 'compact'}, 'command': cmd, 'id': self.seq}
         # Internal correlation also binds retained native focus to its task.

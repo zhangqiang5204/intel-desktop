@@ -104,6 +104,18 @@ func nativeDialogRole(_ role: String?, subrole: String?, modal: Bool?) -> Bool {
         (["AXDialog", "AXSystemDialog"].contains(subrole ?? "") || modal == true))
 }
 
+func nativePublishedRemotePanel(_ dialog: AXUIElement, root: AXUIElement, ownerPID: pid_t) -> Bool {
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(dialog, &pid) == .success, pid > 0, pid != ownerPID,
+          axString(dialog, kAXRoleAttribute) == kAXWindowRole,
+          axString(dialog, kAXSubroleAttribute) == "AXStandardWindow",
+          axElements(root, kAXWindowsAttribute, limit: 128).contains(where: { CFEqual($0, dialog) }),
+          axElement(root, kAXFocusedWindowAttribute).map({ CFEqual($0, dialog) }) == true else { return false }
+    // Some Open/Save service proxies expose AXStandardWindow. Both owner-published
+    // identity edges are required; actual foreground/element focus is checked separately.
+    return true
+}
+
 // Public AX identity edges only. A process name, title, matching rectangle or
 // another window in the same process can never establish this relationship.
 func nativeIdentityAncestor<T>(_ element: T, root: T, equal: (T, T) -> Bool, parent: (T) -> T?) -> Bool {
@@ -129,8 +141,8 @@ func nativeDialogAttached(_ dialog: AXUIElement, to owner: AXUIElement, applicat
     var actualOwner: pid_t = 0
     guard AXUIElementGetPid(applicationRoot, &actualOwner) == .success, actualOwner == ownerPID,
           axElements(applicationRoot, kAXWindowsAttribute, limit: 128).contains(where: { CFEqual($0, owner) }),
-          nativeDialogRole(axString(dialog, kAXRoleAttribute), subrole: axString(dialog, kAXSubroleAttribute),
-                           modal: axBool(dialog, kAXModalAttribute)) else { return false }
+          (nativeDialogRole(axString(dialog, kAXRoleAttribute), subrole: axString(dialog, kAXSubroleAttribute),
+                           modal: axBool(dialog, kAXModalAttribute)) || nativePublishedRemotePanel(dialog, root: applicationRoot, ownerPID: ownerPID)) else { return false }
     if CFEqual(dialog, owner) { return true }
     if nativeAXDescendant(dialog, of: owner) { return true }
     var count: CFIndex = 0

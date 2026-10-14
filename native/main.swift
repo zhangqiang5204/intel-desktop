@@ -1005,6 +1005,7 @@ final class DesktopHelper {
     private var currentRuntimeTaskID: String { runtimeTaskID ?? legacyRuntimeTaskID }
     private var cache: [String: CachedElement] = [:]
     private var inspectedDialogs: [NativeInspectedDialog] = []
+    private var acceptedAXWindowTransition: (task: String, operation: String, pid: pid_t, bundle: String, revision: UInt64, until: Double)?
     private var generation = 0
     private var displaySignature: String?
     private var displayTopologyGeneration = 0
@@ -1504,6 +1505,27 @@ final class DesktopHelper {
         let verifiedMain = actualMainWindow(root)
         let selected: [AXUIElement]
         if title != nil { selected = [try selectWindow(root, title: title)] } else { selected = all }
+        // An accepted AX navigation may open or close an app-owned window.
+        // Fresh inspection advances only the focus receipt; cached controls
+        // remain window-bound and no new input or authorization is produced.
+        if let accepted = acceptedAXWindowTransition {
+            let quiet = monitor.focusQuietObservation
+            if accepted.task != currentRuntimeTaskID || accepted.operation != runtimeOperationID ||
+               accepted.revision != quiet.revision || ProcessInfo.processInfo.systemUptime > accepted.until {
+                acceptedAXWindowTransition = nil
+            } else if accepted.pid == app.processIdentifier, accepted.bundle == bundle,
+                      monitor.reason == nil, axBool(root, kAXFrontmostAttribute) == true,
+                      let active = axElement(root, kAXFocusedWindowAttribute),
+                      all.contains(where: { CFEqual($0, active) }), selected.contains(where: { CFEqual($0, active) }),
+                      let prior = previousFocus, prior.claimComplete, prior.runtimeTaskID == currentRuntimeTaskID,
+                      prior.task.pid == app.processIdentifier, prior.task.bundleID == bundle,
+                      prior.topology == displays.signature, !prior.task.application.isTerminated,
+                      axBounds(active) != nil {
+                previousFocus?.task = Target(bundleID: bundle, application: app, axApplication: root,
+                    window: active, expectedTitle: axString(active, kAXTitleAttribute), displaySignature: displays.signature)
+                acceptedAXWindowTransition = nil
+            }
+        }
         let menuWindow = includeMenus ? try selectWindow(root, title: title) : nil
         if enablement["any_write_accepted"] as? Bool == true {
             let started = ProcessInfo.processInfo.systemUptime
@@ -1554,7 +1576,8 @@ final class DesktopHelper {
                 continue
             }
             var dialog = inheritedDialog
-            if nativeDialogRole(role, subrole: attributes.string("AXSubrole"), modal: axBool(item, kAXModalAttribute)),
+            if (nativeDialogRole(role, subrole: attributes.string("AXSubrole"), modal: axBool(item, kAXModalAttribute)) ||
+                nativePublishedRemotePanel(item, root: root, ownerPID: app.processIdentifier)),
                nativeDialogAttached(item, to: window, applicationRoot: root, ownerPID: app.processIdentifier),
                let frame = attributes.bounds,
                dialogFocusMatches(item, ownerWindow: window, root: root) {
@@ -1644,12 +1667,26 @@ final class DesktopHelper {
             truncationReasons.formUnion(menus.reasons)
         }
         let focusedDiagnostic = focusedElementDiagnostic(root, application: app, bundle: bundle, selected: selected, displays: displays)
+        var currentWindow: [String: Any] = ["available": false]
+        if let focused = axElement(root, kAXFocusedWindowAttribute),
+           all.contains(where: { CFEqual($0, focused) }), let frame = axBounds(focused) {
+            var elementPID: pid_t = 0
+            if AXUIElementGetPid(focused, &elementPID) == .success {
+                let focusedTitle = axString(focused, kAXTitleAttribute) ?? ""
+                currentWindow = ["available": true, "authorized_owner_pid": app.processIdentifier,
+                    "window_element_pid": elementPID, "title": String(focusedTitle.prefix(256)),
+                    "title_complete": focusedTitle.count <= 256, "frame": rectJSON(frame),
+                    "is_selected_window": selected.contains(where: { CFEqual($0, focused) }),
+                    "app_frontmost": axBool(root, kAXFrontmostAttribute).map { $0 as Any } ?? NSNull(),
+                    "identity_source": "authorized_app_AXWindows_and_AXFocusedWindow", "input_authorization": false]
+            }
+        }
         guard try currentDisplays().signature == displays.signature else {
             throw fail("display_topology_changed", "Display topology changed during inspection; inspect again")
         }
         displayChangeNeedsInspect = false
         var result: [String: Any] = ["app": bundle, "target_pid": app.processIdentifier, "generation": generation,
-            "windows": metadata, "elements": elements, "node_count": elements.count + menuElements.count,
+            "windows": metadata, "current_window": currentWindow, "elements": elements, "node_count": elements.count + menuElements.count,
             "max_depth": depth, "max_nodes": limit, "truncated": !truncationReasons.isEmpty,
             "truncation_reasons": truncationReasons.sorted(), "role_counts": roleCounts,
             "child_attributes": navigationChildAttributes, "focused_element": focusedDiagnostic,
@@ -2286,9 +2323,17 @@ final class DesktopHelper {
         guard axBool(element, kAXEnabledAttribute) != false else { throw fail("element_disabled", "Target element is disabled") }
         if axActions(element).contains(kAXPressAction) {
             try verify(target)
+            let activityRevision = monitor.focusQuietObservation.revision
             let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
             guard result == .success else { throw fail("ax_action_failed", "AXPress failed: \(result.rawValue)") }
             try checkAfterAcceptedAction("AXPress")
+            if !["com.tencent.xinWeChat", "com.bytedance.macos.feishu"].contains(target.bundleID),
+               let operation = runtimeOperationID, monitor.reason == nil,
+               monitor.focusQuietObservation.revision == activityRevision,
+               previousFocus?.runtimeTaskID == currentRuntimeTaskID, previousFocus?.claimComplete == true {
+                acceptedAXWindowTransition = (currentRuntimeTaskID, operation, target.pid, target.bundleID,
+                    activityRevision, ProcessInfo.processInfo.systemUptime + 15)
+            }
             return completedNavigation(["method": "AXPress", "element_id": request["element_id"]!,
                 "action_accepted": true, "foreground_verified_before_action": true])
         }
@@ -2921,6 +2966,12 @@ final class DesktopHelper {
         visual.beginNativeCommand(taskID: currentRuntimeTaskID, operationID: runtimeOperationID,
                                   command: request["command"] as? String ?? "invalid")
         let command = try string(request, "command")!
+        if command == "_finish_operation" {
+            guard runtimeOperationID != nil else { throw fail("invalid_request", "Operation release requires runtime correlation") }
+            let released = visualWarmCaptureRelease(wait: true)
+            guard released else { throw fail("visual_capture_release_timeout", "Capture stop did not complete before operation handoff") }
+            return ["capture_scope_released": true, "event_count": 0]
+        }
         guard commands.contains(command) else { throw fail("unknown_command", "Unknown command: \(command)") }
         if command == "status" {
             let displays = try currentDisplays()

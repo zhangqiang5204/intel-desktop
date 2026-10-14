@@ -1,6 +1,6 @@
 {
   "schema": "source_snapshot/v1",
-  "snapshot_utc": "2026-10-14T08:12:34.721698+00:00",
+  "snapshot_utc": "2026-10-14T10:18:58.562538+00:00",
   "source_label": "intel-desktop-plugin source and its offline regression fixtures",
   "source_version": "0.1.70",
   "files": [
@@ -23,7 +23,7 @@
     {
       "source": "native/BackgroundInput.swift",
       "destination": "native/BackgroundInput.swift",
-      "source_sha256": "7d584bb66f1c43f1ed7b0d2a36cc386c767c8c79ba1ddd650585274013f1ecb8",
+      "source_sha256": "2eb5b0527dec99a75f89c7040837a025fb0ef0880fe97add44998b6f43d05aca",
       "origin": "plugin_source_snapshot",
       "public_fixture_substitution": true,
       "packaged_sha256": "2eb5b0527dec99a75f89c7040837a025fb0ef0880fe97add44998b6f43d05aca",
@@ -41,8 +41,8 @@
       "source": "native/NativeInteraction.swift",
       "destination": "native/NativeInteraction.swift",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "0cec31093f1631eceb27163d06a8199516862c8abf9e615e6d1294d981052103",
-      "packaged_sha256": "0cec31093f1631eceb27163d06a8199516862c8abf9e615e6d1294d981052103",
+      "source_sha256": "5bc83c520deb394689d1bf5efcbfe4214ee39fdf8f71c1ca52417c3a9484fbfd",
+      "packaged_sha256": "5bc83c520deb394689d1bf5efcbfe4214ee39fdf8f71c1ca52417c3a9484fbfd",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
       "packaging_adaptation": "SDK_AXSheets_compatibility_and_anonymous_offline_fixture_if_applicable"
     },
@@ -65,9 +65,9 @@
     {
       "source": "native/NativeWindowCapture.swift",
       "destination": "native/NativeWindowCapture.swift",
-      "source_sha256": "2c18e1e2ecbb2e7bf9a1c63fc476b767f5bb36fcb7153bf71209f514f0f97a86",
+      "source_sha256": "39ecc26ad80b8e4c47e32d8f76a08ef483cf2bbb75a4b6c87bf20a7a4011103a",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "2c18e1e2ecbb2e7bf9a1c63fc476b767f5bb36fcb7153bf71209f514f0f97a86",
+      "packaged_sha256": "39ecc26ad80b8e4c47e32d8f76a08ef483cf2bbb75a4b6c87bf20a7a4011103a",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
@@ -89,10 +89,10 @@
     {
       "source": "native/main.swift",
       "destination": "native/main.swift",
-      "source_sha256": "49debcd3688d87fc16a38ae967e846b59fe00012f5f1b973056c809a245e2358",
+      "source_sha256": "f4c17c018bbabd4f72c96fc8c0d85dba0eb2a782e40c9378c6d4bc43d8afb670",
       "origin": "plugin_source_snapshot",
       "public_fixture_substitution": true,
-      "packaged_sha256": "8395bf2678b2cd5318836cfc515a29f7029b3ef8e0457a962c641d93a99cb6bc",
+      "packaged_sha256": "f4c17c018bbabd4f72c96fc8c0d85dba0eb2a782e40c9378c6d4bc43d8afb670",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
       "packaging_adaptation": "SDK_AXSheets_compatibility_and_anonymous_offline_fixture_if_applicable"
     },
@@ -142,9 +142,9 @@
     {
       "source": "scripts/desktop_observation.py",
       "destination": "scripts/desktop_observation.py",
-      "source_sha256": "c51795fee57be0b653708d6052ed52fef3e3e81732394b1168483f1bf06dfcce",
+      "source_sha256": "76068f71acc42f859fc276a61eba39066fca24144031b9288c79048ab62b494a",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "c51795fee57be0b653708d6052ed52fef3e3e81732394b1168483f1bf06dfcce",
+      "packaged_sha256": "76068f71acc42f859fc276a61eba39066fca24144031b9288c79048ab62b494a",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
       "packaging_adaptation": "parent_synced_current_general_observation_and_model_instructions"
     },
@@ -180,18 +180,18 @@
     {
       "source": "scripts/server.py",
       "destination": "scripts/server.py",
-      "source_sha256": "a1167740c1790d25d34eab71cd7ee5841433909ef7de772269ca52d5bc077743",
+      "source_sha256": "d9f19c481ad7b0513e3c3152ba9331fc17ec9df35188449e782740ab76a60262",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "a1167740c1790d25d34eab71cd7ee5841433909ef7de772269ca52d5bc077743",
+      "packaged_sha256": "d9f19c481ad7b0513e3c3152ba9331fc17ec9df35188449e782740ab76a60262",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00",
       "packaging_adaptation": "parent_synced_current_general_observation_and_model_instructions"
     },
     {
       "source": "scripts/task_runtime.py",
       "destination": "scripts/task_runtime.py",
-      "source_sha256": "b84de3ac3667926ecb71b8ddfd3b040164e12f24acce6c8b54bda2e20215c645",
+      "source_sha256": "f21425144d5d5ab71970fa5cfef8cd9f658e61100bc2fcfe45c482f927521462",
       "origin": "plugin_source_snapshot",
-      "packaged_sha256": "b84de3ac3667926ecb71b8ddfd3b040164e12f24acce6c8b54bda2e20215c645"
+      "packaged_sha256": "f21425144d5d5ab71970fa5cfef8cd9f658e61100bc2fcfe45c482f927521462"
     },
     {
       "source": "scripts/workflow_tools.py",
@@ -203,10 +203,10 @@
     {
       "source": "skills/intel-desktop/SKILL.md",
       "destination": "skills/intel-desktop/SKILL.md",
-      "source_sha256": "9db69e060684dbb404c49bd34635d0acf6f6ce6c3f12b700514a80515d66407d",
+      "source_sha256": "190b086d9491f3532bbabbd38ed4fdfe16f54d1b51cc7d27f82460ce5b3c5155",
       "origin": "plugin_source_snapshot",
       "packaging_adaptation": "accurate_script_run_vs_management_timing_and_public_README_link",
-      "packaged_sha256": "22d0e106e29f1bb1207036ea92eeb43c01a109445802d0aebb5dac4fdc0e4a53",
+      "packaged_sha256": "190b086d9491f3532bbabbd38ed4fdfe16f54d1b51cc7d27f82460ce5b3c5155",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
@@ -256,7 +256,7 @@
       "source": "parent_authored_public_test",
       "destination": "tests/test_generic_observation.py",
       "origin": "parent_authored_offline_regression_fixture",
-      "packaged_sha256": "5ee0d2a0d2857969381247234bfa9a758a5f41d914fb10938436ecdb53f580c0",
+      "packaged_sha256": "99693acd3d4958133eeebe63fd8c39658752a2483c3c0820325c74ac7f79e914",
       "source_snapshot_utc": "2026-10-14T07:52:09.322561+00:00"
     },
     {
@@ -307,7 +307,7 @@
       "origin": "offline_regression_fixture",
       "adaptation": "repository_relative_paths",
       "packaging_adaptation": "current_runtime_operation_id_fixture",
-      "packaged_sha256": "3f3d2196e8f8ca97f0f901961e8ce40e39cd77e35ba003e8df8bc7948fa64710"
+      "packaged_sha256": "97eafda534613b3fbb7e7bde510aa8e7c211e59046b9d2e8d023cf4ea5114513"
     },
     {
       "source": "work/chat-workflow-tests/test_observation_projection.py",
@@ -489,6 +489,13 @@
       "origin": "offline_regression_fixture",
       "adaptation": "repository_relative_paths",
       "packaged_sha256": "aa6b74e690fb11a29dc8f38eab8307fd4a59faa94231725283235c25f880f6f1"
+    },
+    {
+      "source": "tests/test_capture_scope.py",
+      "destination": "tests/test_capture_scope.py",
+      "source_sha256": "368a6eb7a9a82a13160229807b72f655c395db1e45d3e8b0097dd6d5e5b68d36",
+      "packaged_sha256": "368a6eb7a9a82a13160229807b72f655c395db1e45d3e8b0097dd6d5e5b68d36",
+      "origin": "plugin_source_snapshot"
     }
   ],
   "excluded": [
@@ -673,13 +680,18 @@
     ],
     "native_self_test_allowlist_review": "pure synthetic logic/images; no live capture or input"
   },
-  "last_source_sync_utc": "2026-10-14T07:52:09.322561+00:00",
-  "package_frozen_utc": "2026-10-14T07:54:32.788195+00:00",
+  "last_source_sync_utc": "2026-10-14T10:18:58.562538+00:00",
+  "package_frozen_utc": "2026-10-14T10:18:58.562538+00:00",
   "validation": {
-    "python_offline_tests_passed": 536,
+    "python_offline_tests_passed": 540,
     "native_build_succeeded": true,
     "native_pure_suites_passed": 7,
     "native_pure_cases_passed": 524,
     "live_app_acceptance_claimed": false
+  },
+  "live_validation_scope": {
+    "capture_stream_lifecycle": "two real read-only operations: in-operation streams=1; after-operation streams=0; no HID; same complete draft",
+    "textedit_native_open_panel": "fresh Open-window inspect and Cancel, same owned full value and restored original focus",
+    "send_performance": "A/B measured; continuous-submit candidate still not accepted"
   }
 }

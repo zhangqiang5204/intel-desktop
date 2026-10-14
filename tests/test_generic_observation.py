@@ -73,6 +73,22 @@ class GenericObservationTests(unittest.TestCase):
         self.assertTrue(result['result']['image_available'])
         self.assertFalse(result['result']['state']['ax_image_atomic'])
 
+    def test_open_window_transition_requests_fresh_same_app_inspection(self):
+        state = {'app': 'com.apple.TextEdit', 'target_pid': 42, 'windows': [{'title': 'Owned document'}],
+                 'elements': [{'element_id':'old-document-id'}],
+                 'current_window': {'available':True,'app_frontmost':True,'authorized_owner_pid':42,
+                                    'title_complete':True,'title':'Open','is_selected_window':False}}
+        result = execute_observation({'app':'com.apple.TextEdit','window_title':'Owned document'},self.backend(state))
+        transition = result['result']['window_transition']
+        self.assertEqual(transition['next_observation'],{'app':'com.apple.TextEdit','window_title':'Open'})
+        self.assertFalse(transition['previous_element_ids_reusable'])
+        self.assertFalse(transition['input_authorization'])
+        self.assertEqual([r['command'] for r in self.calls],['status','inspect','status'])
+        for key, value in [('app_frontmost',False),('authorized_owner_pid',99),('title_complete',False)]:
+            changed=copy.deepcopy(state);changed['current_window'][key]=value
+            result=execute_observation({'app':'com.apple.TextEdit','window_title':'Owned document'},self.backend(changed))
+            self.assertNotIn('window_transition',result['result'])
+
 
 if __name__ == '__main__':
     unittest.main()

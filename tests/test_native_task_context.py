@@ -40,3 +40,20 @@ class NativeTaskContextTests(unittest.TestCase):
   b=self.bridge()
   with self.assertRaisesRegex(ValueError,'Unknown argument'):b.call('status',{'_runtime_task_id':'someone-else'})
   self.assertEqual(b.process.stdin.getvalue(),b'')
+ def test_visual_bridge_releases_once_after_all_steps_under_same_lease(self):
+  b=self.bridge()
+  b.buffer=b''.join((json.dumps({'id':n,'ok':True,'result':({'capture_scope_released':True} if n==3 else {})})+'\n').encode() for n in range(1,4))
+  with tempfile.TemporaryDirectory() as directory:
+   engine=TaskRuntime(directory,session_id='scope-owner');original=task_runtime._process
+   def stage(ctx):
+    for _ in range(2):self.assertTrue(b.call('background_visual_read',{'app':'com.tencent.xinWeChat','window_title':'微信'})['ok'])
+    self.assertEqual(len(b.process.stdin.getvalue().splitlines()),2)
+    return {'ok':True}
+   with patch.object(server.selectors,'DefaultSelector',Selector),patch.object(task_runtime,'_process',side_effect=lambda pid:('fake-native',os.getpid()) if pid==4242 else original(pid)):
+    result=engine.run('desktop_observe',{},stage,task_id='scope-owner',operation_id='one-stage')
+   rows=[json.loads(x) for x in b.process.stdin.getvalue().splitlines()]
+   self.assertEqual([x['command'] for x in rows],['background_visual_read','background_visual_read','_finish_operation'])
+   self.assertEqual({x['_runtime_operation_id'] for x in rows},{'one-stage'})
+   self.assertEqual(result['summary']['state'],'completed')
+   self.assertTrue(result['summary']['verified_flags']['capture_scope_released'])
+   engine.close()

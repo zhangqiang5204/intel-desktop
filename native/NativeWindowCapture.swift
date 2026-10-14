@@ -163,10 +163,24 @@ private final class VisualWarmSession {
         }
     }
     func suspend() { outputs.forEach { $0.suspend() } }
-    func stop() {
+    @discardableResult func stop(wait: Bool = false) -> Bool {
         lock.lock(); let alreadyStopped = stopped; stopped = true; exactFilterCommitted = false; lock.unlock()
-        guard !alreadyStopped else { return }
-        suspend(); streams.forEach { $0.stopCapture(completionHandler: nil) }
+        guard !alreadyStopped else { return true }
+        suspend()
+        if !wait { streams.forEach { $0.stopCapture(completionHandler: nil) }; return true }
+        let completions = streams.map { stream -> VisualCompletion<Bool> in
+            let box = VisualCompletion<Bool>()
+            stream.stopCapture { error in box.complete(.success(error == nil)) }
+            return box
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 1.5
+        while completions.contains(where: { $0.get() == nil }), ProcessInfo.processInfo.systemUptime < deadline {
+            _ = CFRunLoopRunInMode(.defaultMode, 0.005, true)
+        }
+        return completions.allSatisfy { box in
+            guard let result = box.get(), case .success(true) = result else { return false }
+            return true
+        }
     }
 }
 
@@ -231,12 +245,12 @@ private final class VisualWarmPool {
         let old = session; session = nil; idleWork = nil; generation &+= 1
         lock.unlock(); old?.stop()
     }
-    func release(token: UInt64? = nil, onlyIdle: Bool = false) {
+    @discardableResult func release(token: UInt64? = nil, onlyIdle: Bool = false, wait: Bool = false) -> Bool {
         lock.lock()
-        guard (token == nil || generation == token), !onlyIdle || !busy else { lock.unlock(); return }
+        guard (token == nil || generation == token), !onlyIdle || !busy else { lock.unlock(); return false }
         idleWork?.cancel(); idleWork = nil; generation &+= 1
         let old = session; session = nil; busy = false
-        lock.unlock(); old?.stop()
+        lock.unlock(); return old?.stop(wait: wait) ?? true
     }
     var status: [String: Any] {
         lock.lock(); defer { lock.unlock() }
@@ -247,9 +261,9 @@ private final class VisualWarmPool {
 }
 private let visualWarmPool = VisualWarmPool()
 
-// Call explicitly at helper shutdown. Ordinary focus return/mode changes can
-// keep this target-only pool warm; target/group changes and errors release it.
-func visualWarmCaptureRelease() { visualWarmPool.release() }
+// Reuse inside one queued operation only. The bridge releases and awaits stop
+// before giving another session the FIFO; the timer is a bounded backstop.
+@discardableResult func visualWarmCaptureRelease(wait: Bool = false) -> Bool { visualWarmPool.release(wait: wait) }
 func visualWarmCapturePoolStatus() -> [String: Any] { visualWarmPool.status }
 
 // Bounded timings contain no window titles, OCR text, or event content.

@@ -32,7 +32,7 @@ FLAGS = {"proof_full_value", "proof_same_target", "focus_verified", "proof_focus
          "foreground_preserved", "system_focus_preserved", "postcondition_verified",
          "precondition_verified", "recipient_verified", "draft_verified", "value_verified",
          "operation_verified", "response_verified", "target_verified", "empty_verified",
-         "input_may_be_partial", "temporary_clipboard_used", "clipboard_restored",
+         "capture_scope_released", "input_may_be_partial", "temporary_clipboard_used", "clipboard_restored",
          "clipboard_external_change", "clipboard_isolated"}
 _LOCAL = threading.local()
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
@@ -80,7 +80,7 @@ def _flags(values):
 def _merge_operation_flags(previous, current):
     """Keep occurred effects across steps; final postcondition flags stay latest."""
     merged, current = _flags(previous), _flags(current)
-    occurred = {"input_may_be_partial", "temporary_clipboard_used", "clipboard_external_change"}
+    occurred = {"capture_scope_released", "input_may_be_partial", "temporary_clipboard_used", "clipboard_external_change"}
     for key, value in current.items():
         if key in occurred:
             merged[key] = merged.get(key, False) or value
@@ -278,6 +278,11 @@ class RuntimeContext:
         self._registered_process = None
         self._native_pid = None
         self._source = None
+        self._finish_callbacks = {}
+
+    def on_finish(self, owner, callback):
+        """Release this executor's native resources before handing off its FIFO lease."""
+        self._finish_callbacks.setdefault(owner, callback)
 
     def record_phase(self, phase, substage=None, *, verified_flags=None, error_code=None):
         if phase not in {"precondition", "executing", "postcondition"}:
@@ -621,6 +626,11 @@ class TaskRuntime:
         except Exception:
             state, error_code = "unknown", "executor_exception"
         finally:
+            for callback in context._finish_callbacks.values():
+                try:
+                    callback()
+                except Exception:
+                    state, error_code = "unknown", error_code or "native_scope_cleanup_failed"
             _LOCAL.context = None
         with self._write() as db:
             row = self._require_lease(db, operation_id)

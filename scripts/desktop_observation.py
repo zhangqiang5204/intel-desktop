@@ -92,6 +92,15 @@ def _generic_observation(request, call, before):
         result["image_unavailable_reason"] = state.get("image_unavailable_reason", "not_requested" if not request.get("include_image") else "native_image_not_returned")
     if not after["ok"]:
         result["focus_context_error"] = after.get("error", {})
+    current_window = state.get("current_window", {})
+    if (current_window.get("available") is True and current_window.get("app_frontmost") is True
+            and current_window.get("authorized_owner_pid") == state["target_pid"]
+            and current_window.get("title_complete") is True and current_window.get("title")
+            and current_window.get("is_selected_window") is False):
+        result["window_transition"] = {"new_inspection_required": True,
+            "next_observation": {"app": request["app"], "window_title": current_window["title"]},
+            "source": "current_authorized_app_window", "input_authorization": False,
+            "previous_element_ids_reusable": False}
     return {"ok": True, "result": result}
 
 
