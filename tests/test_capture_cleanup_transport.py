@@ -24,6 +24,28 @@ class CaptureCleanupTransportTests(unittest.TestCase):
                                                pid=4242, poll=lambda: None)
         return bridge
 
+    def test_ax_focus_scope_finalizes_notice_on_success_and_known_failure(self):
+        for ok in (True, False):
+            with self.subTest(ok=ok), tempfile.TemporaryDirectory() as directory:
+                bridge = self.bridge()
+                first = {'id': 1, 'ok': ok, 'result': {}} if ok else {
+                    'id': 1, 'ok': False, 'error': {'code': 'user_interrupted', 'details': {'events_posted': 0}}}
+                bridge.buffer = (json.dumps(first) + '\n' + json.dumps({'id': 2, 'ok': True, 'result': {
+                    'capture_scope_released': True, 'notice_scope_released': True}}) + '\n').encode()
+                runtime = TaskRuntime(directory, session_id='notice-tests')
+                original = task_runtime._process
+                with patch.object(server.selectors, 'DefaultSelector', Selector), patch.object(
+                        task_runtime, '_process', side_effect=lambda pid: ('fake-native', os.getpid())
+                        if pid == 4242 else original(pid)):
+                    packet = runtime.run('desktop_focus', {}, lambda ctx: bridge.call('focus', {
+                        'app': 'com.apple.TextEdit', 'window_title': 'fixture'}),
+                        task_id='notice-tests', operation_id='notice-focus')
+                commands = [json.loads(line)['command'] for line in bridge.process.stdin.getvalue().splitlines()]
+                self.assertEqual(commands, ['focus', '_finish_operation'])
+                self.assertFalse(packet['summary']['conflict_active'])
+                self.assertTrue(packet['summary']['verified_flags']['capture_scope_released'])
+                runtime.close()
+
     def test_generic_image_inspect_also_releases_its_capture_scope(self):
         bridge = self.bridge()
         bridge.buffer = b''.join((json.dumps({'id':i, 'ok':True, 'result':value})+'\n').encode()

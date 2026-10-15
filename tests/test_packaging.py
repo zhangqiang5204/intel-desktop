@@ -52,7 +52,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_examples_are_valid_parameterized_plans_with_no_invocation_values(self):
         paths = sorted((ROOT / "plans").glob("*.json"))
-        self.assertEqual(len(paths), 3)
+        self.assertEqual(len(paths), 4)
         for path in paths:
             plan = json.loads(path.read_text())
             self.assertNotIn("parameters", plan)

@@ -101,6 +101,8 @@ PROPS['background_chat_edit']={**COMMON,'operation':{'type':'string','enum':['ty
     'expected_draft':{'type':'string','maxLength':4096},
     'expected_before':{'type':'string','maxLength':65536}}
 PROPS['visual_type_text']['chat_title'] = {'type': 'string', 'minLength': 1, 'maxLength': 128, 'description': 'Exact whole recipient header for same-frame post-edit verification; enables reuse of the complete post-action composer/header evidence.'}
+PROPS['visual_type_text']['focus_before_type'] = {'type': 'boolean', 'description': 'Opt-in atomic WeChat composer focus and type. Requires the complete empty expected_draft and exact chat_title; freshly rechecks after clicking before typing.'}
+PROPS['visual_type_text']['expected_draft'] = {'type': 'string', 'const': '', 'description': 'The exact complete empty composer required by focus_before_type; absence of an editor never proves this value.'}
 DESCRIPTIONS['background_visual_read'] = 'Read the authorized WeChat window without activating it or moving the pointer. Uses target-only capture and actual visible-region checks. Unrelated keyboard input does not block this read-only route. Result snapshots are read-only and cannot authorize input.'
 DESCRIPTIONS['visual_read'] += ' include_image returns the same verified masked frame as a native MCP PNG block for the current model; metadata retains snapshot/app/PID/window/display binding.'
 DESCRIPTIONS['background_visual_read'] += ' include_image returns the same verified masked frame as an MCP PNG block; it never upgrades the read-only snapshot into an input capability.'
@@ -188,7 +190,8 @@ class NativeBridge:
             response['execution'] = envelope['summary']
             return response
         self.start()
-        if cmd in {'visual_read', 'background_visual_read', 'visual_click', 'visual_key',
+        if cmd in {'focus', 'resume', 'press', 'click', 'set_text', 'select_text', 'type_text', 'clear_text', 'submit_text', 'key', 'scroll',
+                   'visual_read', 'background_visual_read', 'visual_click', 'visual_key',
                    'visual_type_text', 'visual_scroll', 'background_type_text', 'background_chat_edit', 'batch'} or (
                        cmd == 'inspect' and args.get('include_image') is True):
             process = self.process
@@ -303,6 +306,12 @@ def validate(cmd, args):
         for key,limit in [('chat_title',128),('expected_draft',4096),('expected_before',65536)]:
             if key in args and (not isinstance(args[key],str) or len(args[key])>limit or key=='chat_title' and not args[key]):raise ValueError('Invalid atomic '+key)
     if cmd == 'focus' and 'restore_previous' in args and type(args['restore_previous']) is not bool: raise ValueError('restore_previous must be a boolean')
+    if cmd == 'visual_type_text' and 'focus_before_type' in args and type(args['focus_before_type']) is not bool: raise ValueError('focus_before_type must be a boolean')
+    if cmd == 'visual_type_text' and args.get('focus_before_type') is True:
+        if (args.get('expected_draft') != '' or not isinstance(args.get('chat_title'), str) or not args['chat_title']
+                or args.get('control_kind') != 'chat_composer' or args.get('replace_search') is True
+                or args.get('text') != args.get('expected_text')):
+            raise ValueError('Atomic composer editing requires an exact empty draft, recipient and equal final text')
     if cmd in {'background_type_text', 'background_visual_read'} and not args.get('window_title'): raise ValueError('Exact background window_title required')
     if cmd == 'background_visual_read':
         validate('visual_read', {k: v for k, v in args.items() if k != 'background_capture'})
@@ -510,7 +519,7 @@ def handle(req):
     method = req.get('method')
     if method == 'initialize':
         return {'protocolVersion': req.get('params', {}).get('protocolVersion', '2024-11-05'),
-                'capabilities': {'tools': {'listChanged': False}}, 'serverInfo': {'name': 'intel-desktop', 'version': '0.1.72'},
+                'capabilities': {'tools': {'listChanged': False}}, 'serverInfo': {'name': 'intel-desktop', 'version': '0.1.73'},
                 'instructions': 'Native Intel Mac desktop control. Use only for apps authorized by the current user task. Prefer AX inspection and fixed-target batches for foreground work. desktop_observe reads a currently authorized native app without focus or input; known chats use their adapters and unfamiliar apps retain current-model AX plus masked-window visual recognition; historical HID interruption does not block read-only observation. desktop_chat background:true supports current-chat draft/clear with a freshly verified recipient; chat may be omitted. The process/window-bound editor preserves system focus, verifies exact before/after values, yields on target-app contention and never sends or falls back to global input. Known foreign-app activity may continue on the same or another display. For shared foreground input, claim once per authorized stage, monitor new post-claim activity and restore the saved origin only without takeover; never refocus or replay an interrupted stage. Optional MCP PNG blocks and semantic state are consumed by the current model, without a new model service. The WeChat route takes a fresh complete exact-filter PTS frame each time; bound warm streams and exact-pixel ROI OCR rows do not substitute old-frame input proof. Feishu paste temporarily leases and ownership-restores the general clipboard; clipboard isolation is not provided. All MCP calls and direct NativeBridge calls share one FIFO. Use a stable task_id and an atomic chat, batch or transaction for a foreground stage; separate model calls do not reserve the desktop while thinking. Actual response versions and execution metadata outrank a stale tool description. WeChat AX shells support navigation-only coordinate clicks in the verified sidebar; compositor/body typing still requires the visual route. Never claim success from posted events alone. Sending requires current-human authorization for the exact recipient and content; unsent-draft tests never send.'}
     if method == 'ping': return {}
     if method == 'tools/list': return {'tools': TOOLS}
@@ -523,8 +532,8 @@ def handle(req):
         arguments = params.get('arguments', {})
         response=managed_call(cmd,arguments)
         if cmd == 'status' and response.get('ok'):
-            response['result']['plugin_version'] = '0.1.72'
-            response['result']['plugin_runtime_features'] = {'guarded_focus_return': 3, 'operation_scoped_capture': True, 'feishu_send_stages': 1, 'feishu_submit_focus_return': 1, 'all_window_menu_optional': 1, 'capture_lifecycle_shutdown': 2, 'background_chat_capture_finalizer': 1, 'feishu_complete_body_proof': 1, 'wechat_pre_input_focus_return': 1, 'wechat_submit_focus_return': 1, 'completion_purpose_proof': 1}
+            response['result']['plugin_version'] = '0.1.73'
+            response['result']['plugin_runtime_features'] = {'guarded_focus_return': 3, 'operation_scoped_capture': True, 'feishu_send_stages': 1, 'feishu_submit_focus_return': 1, 'all_window_menu_optional': 1, 'capture_lifecycle_shutdown': 2, 'background_chat_capture_finalizer': 1, 'feishu_complete_body_proof': 1, 'wechat_pre_input_focus_return': 1, 'wechat_submit_focus_return': 1, 'completion_purpose_proof': 1, 'persistent_interaction_notice': 1, 'wechat_atomic_composer_edit': 1, 'wechat_submit_posted_receipt': 1}
         response['bridge_elapsed_ms'] = round((time.perf_counter() - started) * 1000, 3)
         content = mcp_content(response)
         if any(block['type'] == 'image' for block in content['content']):

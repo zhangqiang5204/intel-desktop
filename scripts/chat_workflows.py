@@ -87,11 +87,34 @@ def _ocr_line_sequence(value):
     return "".join(value.splitlines())
 
 
+def _wechat_draft_change_details(phase, observed, expected, observation, input_receipt=None):
+    """Content-free mismatch diagnostics; none of these fields authorize input."""
+    details = {"phase": phase, "observed_length": len(observed), "expected_length": len(expected),
+               "complete_exact_equal": observed == expected,
+               "complete_normalized_equal": _norm(observed) == _norm(expected),
+               "complete_line_sequence_equal": _ocr_line_sequence(observed) == _ocr_line_sequence(expected),
+               "observed_is_voice_placeholder": _norm(observed) == "按住鼠标语音输入文字"}
+    for key in ("events_posted", "text_events_posted", "composer_focus_events_posted"):
+        count = (input_receipt if input_receipt is not None else observation).get(key)
+        if type(count) is int and 0 <= count <= 16384:
+            details[key] = count
+    hint = observation.get("empty_composer_hint")
+    details["empty_composer_hint_present"] = isinstance(hint, dict)
+    details["empty_composer_hint_verified"] = isinstance(hint, dict) and hint.get("verified") is True
+    for key in ("frame_age_ms", "complete_frame_age_ms"):
+        age = observation.get(key)
+        if type(age) in {int, float} and math.isfinite(age) and 0 <= age <= 60_000:
+            details[key] = age
+    return details
+
+
 def _input_event_times(value, kind):
     """Optional diagnostic receipt; it never establishes input/value authority."""
     if not isinstance(value, dict) or value.get("clock") != "system_uptime_ms" or value.get("kind") != kind:
         return None
-    times = tuple(value.get(key) for key in ("dispatch_started_ms", "dispatch_finished_ms", "complete_observation_ms"))
+    completion = ("receipt_materialized_ms" if kind == "submit_return" and value.get("completion_kind") == "posted_receipt"
+                  else "complete_observation_ms")
+    times = tuple(value.get(key) for key in ("dispatch_started_ms", "dispatch_finished_ms", completion))
     if (any(type(t) not in {int, float} or not 0 <= t <= 10**12 or not math.isfinite(t) for t in times)
             or not times[0] <= times[1] <= times[2] or times[2] - times[0] > 60_000):
         return None
@@ -348,6 +371,9 @@ def _validate(request):
 def _focus_receipt(value):
     """Retain only bounded native restoration facts, never origin content."""
     result = {}
+    stamp = value.get("focus_return_materialized_uptime_ms")
+    if type(stamp) in {int, float} and math.isfinite(stamp) and 0 <= stamp <= 10**12:
+        result["focus_return_materialized_uptime_ms"] = stamp
     for key in ("focus_restored_app", "window_verified", "window_unknown", "original_window_reference_unavailable", "restore_raise_attempted", "owned_navigation_focus_updated"):
         if type(value.get(key)) is bool:
             result[key] = value[key]
@@ -422,6 +448,31 @@ def _focus_receipt(value):
     return result
 
 
+def _focus_acquisition_return(value, target_pid):
+    """A same-command return fact, never an input or completed-claim proof."""
+    if (not isinstance(value, dict) or value.get("failed_acquisition_return") is not True
+            or value.get("acquisition_same_command") is not True
+            or type(target_pid) is not int or target_pid <= 0
+            or type(value.get("acquisition_target_pid")) is not int or value["acquisition_target_pid"] != target_pid
+            or type(value.get("events_posted")) is not int or value["events_posted"] != 0
+            or type(value.get("focus_restored")) is not bool or type(value.get("focus_restore_attempted")) is not bool):
+        return None
+    reason = value.get("restore_reason")
+    if reason not in ("focus_acquisition_scope_changed", "focus_activation_unconfirmed", "user_takeover", "task_target_mismatch",
+                      "task_focus_changed", "previous_window_unavailable", "display_topology_changed", "already_previous_window",
+                      "previous_activation_failed", "previous_app_unavailable", "previous_window_verified",
+                      "previous_window_raise_unverified", "previous_focus_unverified", "restore_guard_failed"):
+        return None
+    safe = _focus_receipt(value)
+    if "focus_return_materialized_uptime_ms" not in safe:
+        return None
+    if value["focus_restored"] and (safe.get("window_verified") is not True or safe.get("focus_restored_app") is not True
+            or safe.get("restore_scope") != "exact_window" or safe.get("previous_focus_scope") != "exact_window"):
+        return None
+    return {"focus_restored": value["focus_restored"], "focus_restore_attempted": value["focus_restore_attempted"],
+            "focus_restore_requested": value["focus_restore_attempted"], "restore_reason": reason, **safe}
+
+
 def _focus_claim_receipt(value):
     """Keep the first claim's bounded handoff facts, without origin identities."""
     result = {}
@@ -461,6 +512,7 @@ class ChatSession:
         self.wechat_submit_focus_receipt = None
         self.wechat_confirmation_identity = None
         self.wechat_pre_input_draft_change_call = None
+        self.wechat_atomic_composer_available = False
         self.edited_value = None
         self.edited_input_receipt = None
         self.feishu_edit_proof = None
@@ -474,6 +526,7 @@ class ChatSession:
         self.focus_attempted = False
         self.focus_claim_verified = False
         self.focus_claim_receipt = {}
+        self.focus_acquisition_return = None
         self.focus_restore_requested = False
         self.details_close_attempted = False
         self.owned_feishu_search = None
@@ -489,6 +542,7 @@ class ChatSession:
         payload = {**({} if command == "status" else self.target), **arguments, "command": command}
         self.calls.append({"command": command})  # Never retain arguments/content.
         started = time.perf_counter()
+        envelope = None
         try:
             envelope = self.invoke(payload)
         except Exception as error:
@@ -496,7 +550,16 @@ class ChatSession:
         finally:
             self.native_timings_count += 1
             if len(self.native_timings) < 32:
-                self.native_timings.append({"command": command, "elapsed_ms": round(max(0, (time.perf_counter() - started) * 1000), 3)})
+                timing = {"command": command, "elapsed_ms": round(max(0, (time.perf_counter() - started) * 1000), 3)}
+                result = envelope.get("result") if isinstance(envelope, dict) else None
+                notice = result.get("interaction_notice") if isinstance(result, dict) else None
+                if isinstance(notice, dict):
+                    safe = {"visible": notice["visible"]} if type(notice.get("visible")) is bool else {}
+                    if notice.get("stage") in ("preparing", "controlling", "verifying", "yielded"):
+                        safe["stage"] = notice["stage"]
+                    if safe:
+                        timing["interaction_notice"] = safe
+                self.native_timings.append(timing)
         if not isinstance(envelope, dict) or not isinstance(envelope.get("ok"), bool):
             raise Stopped("native_protocol_error", "Native callback must return an ok/result envelope")
         if not envelope["ok"]:
@@ -505,6 +568,12 @@ class ChatSession:
                     or not isinstance(error.get("message"), str) or not isinstance(error.get("details", {}), dict)):
                 raise Stopped("native_protocol_error", "Native error must contain a code, message and optional details object")
             details = dict(error.get("details", {}))
+            if (command == "focus" and not restoring and not self.focus_claim_verified and not self.submit_started
+                    and all(call["command"] in {"status", "inspect", "focus"} for call in self.calls)):
+                receipt = _focus_acquisition_return(details.get("focus_acquisition_return"), self.pid)
+                if receipt is not None:
+                    self.focus_acquisition_return = receipt
+                    self.focus_restore_requested = receipt["focus_restore_requested"]
             # Derive cleanup eligibility from this invocation's executed
             # prefix, never from flags supplied by an error. Search replacement
             # may leave a partial query, but cannot edit or submit a composer.
@@ -549,6 +618,8 @@ class ChatSession:
         return value
 
     def finish_focus(self, error=None):
+        if self.focus_acquisition_return is not None:
+            return dict(self.focus_acquisition_return)
         if self.wechat_submit_focus_receipt is not None:
             return dict(self.wechat_submit_focus_receipt)
         if self.feishu_submit_focus_receipt is not None:
@@ -613,6 +684,10 @@ class ChatSession:
 
     def status(self, strict=False, ignore_prior_interruption=False):
         state = self.call("status")
+        visual = state.get("visual")
+        if isinstance(visual, dict):
+            self.wechat_atomic_composer_available = (type(visual.get("atomic_composer_edit")) is int
+                                                    and visual["atomic_composer_edit"] == 1)
         if state.get("interrupted") and not (ignore_prior_interruption and not strict):
             raise Stopped("user_interrupted", "External input/takeover was reported; no focus recovery or replay", {"reason": state["interrupted"]})
         if strict and (state.get("frontmost_app_bundle_id") != self.app or state.get("frontmost_pid") != self.pid):
@@ -1283,6 +1358,8 @@ class ChatSession:
         return recovered if recovered is not None else self.wechat_read(expected_title=bootstrap_title)
 
     def wechat_locate(self, value, wanted):
+        if not self.wechat_has_send(value):
+            raise Stopped("wechat_chat_controls_unavailable", "This window has no verified chat composer/Send control; inspect the current model image and navigate before interpreting any composer-region text", {"navigation_only": True})
         self.wechat_header_group(value, wanted)
         kind = self.request.get("chat_kind", "any")
         kind_satisfied = kind == "any" or self.kind_evidence and self.kind_evidence["kind"] == kind
@@ -1695,16 +1772,46 @@ class ChatSession:
             return {"draft_empty": True, "draft_verified": True, "sent": False}
         region = self.wechat_regions()["composer"]
         args = self.visual_args(value, "chat_composer", region)
+        atomic = (self.request["action"] == "send" and action == "draft" and not before
+                  and self.wechat_atomic_composer_available)
         x, y = _center(region)
-        clicked = self.visual_identity(self.call("visual_click", **args, x=x, y=y))
+        clicked = value if atomic else self.visual_identity(self.call("visual_click", **args, x=x, y=y))
         # The click's fresh OCR is the last pre-input evidence. Reads would reset
         # native visual input focus, so consume this post-click snapshot directly.
-        if self.wechat_draft(clicked) != before:
+        observed_before_edit = self.wechat_draft(clicked)
+        if observed_before_edit != before:
             self.wechat_pre_input_draft_change_call = len(self.calls)
-            raise Stopped("draft_changed", "The composer changed before editing; no text/delete events")
+            details = _wechat_draft_change_details("before_edit", observed_before_edit, before, clicked)
+            details["text_events_posted"] = 0
+            raise Stopped("draft_changed", "The composer changed before editing; no text/delete events", details)
         args = self.visual_args(clicked, "chat_composer", region)
         if action == "draft":
-            changed = self.visual_identity(self.call("visual_type_text", **args, text=self.request["text"], expected_text=self.request["text"], chat_title=recipient))
+            changed = self.visual_identity(self.call("visual_type_text", **args, text=self.request["text"], expected_text=self.request["text"], chat_title=recipient,
+                **({"focus_before_type": True, "expected_draft": ""} if atomic else {})))
+            if atomic and changed.get("atomic_composer_precondition_failed") is True:
+                from desktop_observation import _covered
+                verified_click_only = (
+                    changed.get("edit_recipient_verified") is True and changed.get("edit_recipient") == recipient
+                    and changed.get("edit_proof_snapshot_id") == changed.get("snapshot_id")
+                    and changed.get("ocr_scope") == "post_action_recipient_and_complete_composer"
+                    and changed.get("target_identity_verified") is True and changed.get("read_only_background") is False
+                    and changed.get("input_eligible") is False and changed.get("focused_window_frame") == self.frame
+                    and all(type(changed.get(key)) is int and changed[key] == count for key, count in
+                            (("events_posted", 2), ("composer_focus_events_posted", 2), ("text_events_posted", 0)))
+                    and all(changed.get(key) == clicked.get(key) for key in ("target_pid", "window_id", "display_topology_signature"))
+                    and type(changed.get("window_id")) is int and changed["window_id"] > 0
+                    and bool(changed.get("display_topology_signature"))
+                    and self.wechat_complete_composer_capture(changed)
+                    and _covered(self.wechat_regions()["header"], changed.get("captured_regions"))
+                    and _covered(self.wechat_regions()["header"], changed.get("ocr_regions"))
+                    and bool(self.wechat_draft(changed)))
+                if verified_click_only:
+                    self.wechat_pre_input_draft_change_call = len(self.calls)
+                    details = _wechat_draft_change_details("atomic_post_click", self.wechat_draft(changed), before, changed)
+                    details.update(text_events_posted=0, composer_focus_events_posted=2,
+                                   input_may_be_partial=False, safe_origin_restore=True)
+                    raise Stopped("draft_changed", "The complete post-click composer changed; no text or submit events were posted", details)
+                raise Stopped("draft_unverified", "Atomic pre-input completion is unknown; no replay")
             if changed.get("value_verified") is not True:
                 raise Stopped("draft_unverified", "Native input was not verified; no replay")
             # The action's first OCR can momentarily include the caret. Reuse
@@ -1746,8 +1853,10 @@ class ChatSession:
         final = changed if same_frame_proof else self.wechat_read(expected_title=recipient)
         self.wechat_header(final, recipient)
         expected = self.request["text"] if action == "draft" else ""
-        if self.wechat_draft(final) != expected:
-            raise Stopped("draft_changed", "Final composer differs from the verified edit; no replay")
+        observed_after_edit = self.wechat_draft(final)
+        if observed_after_edit != expected:
+            raise Stopped("draft_changed", "Final composer differs from the verified edit; no replay",
+                          _wechat_draft_change_details("complete_post_edit", observed_after_edit, expected, final, changed))
         self.edited_value = final
         if action == "draft":
             self.edited_input_receipt = {key: changed.get(key) for key in
@@ -1944,8 +2053,19 @@ class ChatSession:
         return [r for r in self.feishu_elements(tree) if r.get("role") == "AXTextArea" and isinstance(r.get("value"), str)
                 and _inside(r, _roi(self.frame, .22, .55, .78, .45))]
 
+    def feishu_navigation_bootstrap(self, tree):
+        if (not self.request.get("chat") or tree.get("truncated") is not False
+                or self.feishu_composer_candidates(tree)):
+            return False
+        buttons = [r for r in self.feishu_elements(tree) if r.get("role") == "AXButton"
+                   and _feishu_search_open_control_allowed(r) and r.get("enabled", True)
+                   and "AXPress" in r.get("actions", []) and isinstance(r.get("element_id"), str)]
+        return len(buttons) == 1
+
     def feishu_message_pane(self, tree):
         if self.feishu_composer_candidates(tree):
+            return tree
+        if self.feishu_navigation_bootstrap(tree):
             return tree
         # The main window may be on 通讯录. Resolve its actual native navigation
         # control, then wait for the real message editor instead of requiring
@@ -2038,12 +2158,13 @@ class ChatSession:
             main_target, main_frame = self.open_search_main
             self.open_search_main = None
             return self.feishu_select_search(tree, wanted, main_target, main_frame)
-        current = self.feishu_header(tree)
+        bootstrap = self.feishu_navigation_bootstrap(tree)
+        current = None if bootstrap else self.feishu_header(tree)
         kind = self.request.get("chat_kind", "any")
-        if _label_matches(current, wanted) and (kind == "any" or self.kind_evidence and self.kind_evidence["kind"] == kind):
+        if not bootstrap and _label_matches(current, wanted) and (kind == "any" or self.kind_evidence and self.kind_evidence["kind"] == kind):
             self.title = current
             return tree
-        if self.feishu_draft(tree):
+        if not bootstrap and self.feishu_draft(tree):
             raise Stopped("draft_present", "The current chat has a draft; navigation stopped to preserve it")
         menu = [r for r in tree.get("menu_elements", []) if r.get("role") == "AXMenuItem"
                 and _feishu_search_open_control_allowed(r) and r.get("enabled", True) and "AXPress" in r.get("actions", [])]
@@ -2644,6 +2765,11 @@ class ChatSession:
                   "complete_draft_verified_to_submit_ms": round(submit_times[0] - complete_draft, 3),
                   "submit_dispatch_ms": round(submit_times[1] - submit_times[0], 3),
                   "submit_to_verified_observation_ms": round(final_stamp - submit_times[1], 3)}
+        returned = (self.wechat_submit_focus_receipt or {}).get("focus_return_materialized_uptime_ms")
+        if ((self.wechat_submit_focus_receipt or {}).get("focus_restored") is True
+                and type(returned) in {int, float} and math.isfinite(returned)
+                and submit_times[1] <= returned <= final_stamp):
+            timing["submit_to_focus_return_ms"] = round(returned - submit_times[1], 3)
         for source, name in ((typed, "continuous_submit_proof_prepared"), (submitted, "continuous_submit_proof_reused")):
             if type(source.get(name)) is bool:
                 timing[name] = source[name]
@@ -3013,7 +3139,8 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
     answer.update(restoration)
     if session and session.app == FEISHU and request.get("action") == "send":
         answer["send_call_timing"] = session.feishu_send_timing()
-    if session and session.focus_attempted and (session.app == FEISHU or session.wechat_submit_focus_receipt is not None):
+    if session and session.focus_attempted and (session.app == FEISHU or session.wechat_submit_focus_receipt is not None
+                                             or session.focus_acquisition_return is not None):
         business_completed = answer["ok"]
         if request.get("action") == "send":
             result = answer.get("result", {})
@@ -3024,7 +3151,7 @@ def execute_chat(request, invoke_native, *, recipe_store=None):
         yielded = restoration.get("restore_reason") in {"user_interrupted", "user_takeover", "new_user_activity"}
         answer.update(focus_claim_verified=session.focus_claim_verified,
                       focus_claim_receipt=session.focus_claim_receipt,
-                      focus_return_required=session.focus_claim_verified or session.focus_restore_requested,
+                      focus_return_required=session.focus_claim_verified or session.focus_restore_requested or session.focus_acquisition_return is not None,
                       focus_restore_requested=session.focus_restore_requested,
                       focus_lifecycle="restored" if restored else "yielded_to_user" if yielded else "unverified",
                       business_completed=business_completed, scope_completed=business_completed and restored)

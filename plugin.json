@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "intel-desktop",
-  "version": "0.1.72",
+  "version": "0.1.73",
   "description": "Fast native desktop control for Intel Macs: persistent Swift, AX, Unicode input, batches and multiple displays.",
   "author": {
     "name": "zhangqiang5204"

@@ -1,0 +1,119 @@
+{
+  "format": "desktop_plan/v1",
+  "app": "com.tencent.xinWeChat",
+  "window_title": "微信",
+  "parameter_names": [
+    "row_label",
+    "search_x",
+    "search_y",
+    "search_width",
+    "search_height",
+    "row_x",
+    "row_y"
+  ],
+  "steps": [
+    {
+      "id": "claim",
+      "tool": "focus",
+      "arguments": {}
+    },
+    {
+      "id": "before",
+      "tool": "visual_read",
+      "arguments": {
+        "regions": [
+          {
+            "x": {
+              "$param": "search_x"
+            },
+            "y": {
+              "$param": "search_y"
+            },
+            "width": {
+              "$param": "search_width"
+            },
+            "height": {
+              "$param": "search_height"
+            }
+          },
+          {
+            "x": {
+              "$param": "row_x"
+            },
+            "y": {
+              "$param": "row_y"
+            },
+            "width": 261,
+            "height": 40
+          }
+        ],
+        "anchor_texts": [
+          "搜索",
+          {
+            "$param": "row_label"
+          }
+        ],
+        "confirm_target": true,
+        "max_text_rows": 100
+      }
+    },
+    {
+      "id": "navigate",
+      "tool": "visual_click",
+      "arguments": {
+        "snapshot_id": {
+          "$ref": "before/result/snapshot_id"
+        },
+        "max_age_ms": 5000,
+        "control_kind": "navigation",
+        "control_rect": {
+          "x": {
+            "$param": "row_x"
+          },
+          "y": {
+            "$param": "row_y"
+          },
+          "width": 261,
+          "height": 40
+        },
+        "confirm_control": true,
+        "target_text": {
+          "$param": "row_label"
+        }
+      }
+    },
+    {
+      "id": "giveback",
+      "tool": "focus",
+      "arguments": {
+        "restore_previous": true
+      }
+    },
+    {
+      "id": "after",
+      "tool": "observe",
+      "arguments": {
+        "max_text_rows": 100
+      }
+    }
+  ],
+  "postconditions": [
+    {
+      "step": "after",
+      "path": "/result/chat_title",
+      "equals": {
+        "$param": "row_label"
+      }
+    },
+    {
+      "step": "after",
+      "path": "/result/recipient_verified",
+      "equals": true
+    },
+    {
+      "step": "after",
+      "path": "/result/composer/draft",
+      "equals": ""
+    }
+  ]
+}

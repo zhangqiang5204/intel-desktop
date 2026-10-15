@@ -554,6 +554,7 @@ func visualPointTargetMatches(_ point: CGPoint, identity: VisualIdentity, rows: 
         // Use the same Window Server cursor exclusion as capture coverage;
         // moving the pointer onto a verified control cannot make it an occluder.
         if visualSystemCursorWindow(row) { continue }
+        if nativeFocusNoticeWindowMatches(row) { continue }
         guard let raw = row[kCGWindowBounds as String] as? [String: Any],
               let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
               pointIsInsideRect(point, bounds),
@@ -1279,6 +1280,7 @@ func visualScreenWindows(_ rows: [[String:Any]], identity: VisualIdentity, displ
         // SCStream explicitly excludes the cursor. Its Window Server surface
         // changes shape/position without changing the captured target or owner.
         if visualSystemCursorWindow(row) { continue }
+        if nativeFocusNoticeWindowMatches(row) { continue }
         guard let raw=row[kCGWindowBounds as String] as? [String:Any],let frame=CGRect(dictionaryRepresentation:raw as CFDictionary),
               !frame.intersection(identity.frame).isNull,(row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
               let id=(row[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
@@ -1988,6 +1990,30 @@ func visualFreshPreinputFrame(_ frame: VisualFrame, after serial: Int, now: Doub
         now >= frame.time && now - frame.time <= 2
 }
 
+// A posted Return is a terminal input receipt, not a new visual capability.
+// Content confirmation belongs to the subsequent read-only chat observation.
+func visualPostedSubmitReceipt(identity: VisualIdentity, events: Int, started: Double, finished: Double,
+                               now: () -> Double, check: () throws -> Void) throws -> [String: Any] {
+    guard events == 2, started.isFinite, finished.isFinite, started <= finished else {
+        throw fail("send_state_unknown", "A complete single Return pair is required for a posted receipt")
+    }
+    try check()
+    let materialized = now()
+    guard materialized.isFinite, materialized >= finished else {
+        throw fail("send_state_unknown", "Submit receipt clock is unavailable")
+    }
+    return ["target_pid": identity.pid, "window_id": identity.windowID,
+        "window_frame": rectJSON(identity.frame), "display_topology_signature": identity.topology,
+        "events_posted": events, "action_accepted": true, "input_eligible": false,
+        "submit_events_posted": true, "submit_preconditions_verified": true,
+        "send_verified": false, "value_verified": false, "automatic_replay_allowed": false,
+        "post_submit_verification_required": true, "verification_source": "events_posted_only",
+        "submission_binding_source": "current_target_guards_at_single_Return",
+        "input_event_timing": ["clock": "system_uptime_ms", "kind": "submit_return",
+            "completion_kind": "posted_receipt", "dispatch_started_ms": started * 1000,
+            "dispatch_finished_ms": finished * 1000, "receipt_materialized_ms": materialized * 1000]]
+}
+
 struct VisualPrefixEvidence {
     let time: Double
     let serial: Int
@@ -2433,6 +2459,7 @@ final class VisualDesktop {
 
     var status: [String: Any] {
         var result: [String: Any] = ["available": true, "restricted_bundle_id": "com.tencent.xinWeChat",
+         "atomic_composer_edit": 1, "submit_posted_receipt": 1,
          "stream_invalidated": false, "capture_ready": captureReady,
          "snapshot_available": snapshot != nil && captureReady, "capture_started_automatically": false,
          "capture_method": snapshot?.frame.captureSource ?? "SCStream_app_then_exact_display_windows", "ocr": "local_Apple_Vision",
@@ -3646,12 +3673,16 @@ final class VisualDesktop {
     }
 
     func currentContinuousSubmitSceneMatches(_ snapshot: VisualSnapshot, helper: DesktopHelper) throws -> Bool {
+        try currentSceneMatches(snapshot.frame, identity: snapshot.identity, helper: helper)
+    }
+
+    func currentSceneMatches(_ frame: VisualFrame, identity: VisualIdentity, helper: DesktopHelper) throws -> Bool {
         try helper.monitor.check()
         let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
         let dockPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier
-        let windows = try visualScreenWindows(rows, identity: snapshot.identity,
+        let windows = try visualScreenWindows(rows, identity: identity,
             displays: try activeDisplays().displays.map { $0.bounds }, dockPID: dockPID)
-        return visualContinuousSubmitSceneMatches(snapshot.frame, current: windows, identity: snapshot.identity)
+        return visualContinuousSubmitSceneMatches(frame, current: windows, identity: identity)
     }
 
     func guardSnapshot(_ request: [String: Any], target: Target, helper: DesktopHelper,
@@ -3822,6 +3853,7 @@ final class VisualDesktop {
         try validate(request)
         let command = try string(request, "command")!
         let replaceSearch = command == "visual_type_text" ? try boolean(request, "replace_search") : false
+        let focusBeforeType = command == "visual_type_text" ? try boolean(request, "focus_before_type") : false
         let actionStarted = ProcessInfo.processInfo.systemUptime
         var count = 0
         var submit = false
@@ -3843,7 +3875,12 @@ final class VisualDesktop {
         var clearPostObservationCount = 0
         var clearPostDiagnostic: [String: Any]?
         var deleteEvents = 0
+        var composerFocusEvents = 0
+        var typingStarted = false
         do {
+            if focusBeforeType, nativeCommandScope == nil {
+                throw fail("invalid_request", "Atomic composer editing requires the current task/operation scope")
+            }
             let validated = try guardSnapshot(request, target: target, helper: helper, continuousProof: continuousCandidate)
             continuousSubmitReused = validated.continuousProof != nil
             actionStageMS["guard_snapshot"] = (ProcessInfo.processInfo.systemUptime - actionStarted) * 1000
@@ -3872,9 +3909,9 @@ final class VisualDesktop {
             let submitRequested = command == "visual_key" && ["return", "enter"].contains(requestedKey ?? "")
             // Submit scans security/value on its chosen complete frame below.
             // Do not OCR this editor once here and again before the same Return.
-            let freshControlRows = submitRequested ? [] : try ocr(guardFrame, identity: old.identity, region: safetyRegion)
+            var freshControlRows = submitRequested ? [] : try ocr(guardFrame, identity: old.identity, region: safetyRegion)
             if !submitRequested { try denySensitiveRows(freshControlRows, region: controlled.1) }
-            if command == "visual_type_text" || (command == "visual_key" && !["escape", "f"].contains(requestedKey ?? "")) {
+            if !focusBeforeType && (command == "visual_type_text" || (command == "visual_key" && !["escape", "f"].contains(requestedKey ?? ""))) {
                 guard let selectedInput, selectedInput.0 == old.identity, selectedInput.1 == controlled.0,
                       selectedInput.2 == controlled.1, CFEqual(selectedInput.3, old.focusedWindow),
                       selectedInputRevision == helper.monitor.interactionRevision else {
@@ -3904,7 +3941,7 @@ final class VisualDesktop {
                     throw fail("stale_visual_snapshot", "Snapshot or verified prefix input evidence aged beyond 5000 ms during action")
                 }
                 _ = try guardCurrentTargetFocus()
-                if postedCount == 0 {
+                if postedCount == 0 || (focusBeforeType && !typingStarted) {
                     if let proof = validated.continuousProof {
                         guard proof.matches(request, scope: nativeCommandScope, helperID: ObjectIdentifier(helper),
                             snapshot: old, revision: helper.monitor.interactionRevision, now: ProcessInfo.processInfo.systemUptime) else {
@@ -3925,7 +3962,85 @@ final class VisualDesktop {
                       !visible.unicodeScalars.contains(where: { CharacterSet.controlCharacters.union(.newlines).contains($0) }) else {
                     throw fail("invalid_request", "Visual text/expected_text must be single-line, at most 4096 characters, and expected_text must contain the complete requested text")
                 }
-                let inputRows = controlled.0 == "chat_composer" ? visualRowsWithoutEmptyComposerHint(guardFrame,
+                if focusBeforeType {
+                    let focusStarted = ProcessInfo.processInfo.systemUptime
+                    let point = CGPoint(x: controlled.1.midX, y: controlled.1.midY)
+                    try guardPoint(point, snapshot: old)
+                    focusClickRevision = helper.monitor.interactionRevision
+                    selectedInputRevision = focusClickRevision
+                    try guardUnchangedFocus(count)
+                    guard let down = CGEvent(mouseEventSource: helper.source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+                          let up = CGEvent(mouseEventSource: helper.source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+                        throw fail("event_creation_failed", "Could not construct atomic composer focus click")
+                    }
+                    down.flags = []; up.flags = []
+                    snapshot = nil
+                    try helper.post(down, target: target); count += 1; composerFocusEvents += 1
+                    up.setIntegerValueField(.eventSourceUserData, value: helper.monitor.marker); up.post(tap: .cghidEventTap)
+                    count += 1; composerFocusEvents += 1
+                    let clickedAt = ProcessInfo.processInfo.systemUptime
+                    guard let focusedFrame = try waitFrame(helper: helper, target: target, timeout: 3,
+                            after: guardFrame.completeSerial), focusedFrame.time >= clickedAt,
+                          visualFreshPreinputFrame(focusedFrame, after: guardFrame.completeSerial, now: ProcessInfo.processInfo.systemUptime),
+                          focusedFrame.capturedRegions == guardFrame.capturedRegions,
+                          focusedFrame.screenWindows == guardFrame.screenWindows,
+                          focusedFrame.excludedInputRegions == guardFrame.excludedInputRegions,
+                          focusedFrame.searchOverlay == nil, focusedFrame.searchQuery == nil else {
+                        throw fail("visual_target_changed", "Composer focus requires new complete pixels and unchanged window scene after the click")
+                    }
+                    let header = visualSubmitHeader(old.identity.frame)
+                    let send = CGRect(x: old.identity.frame.minX + old.identity.frame.width * 0.70,
+                        y: old.identity.frame.minY + old.identity.frame.height * 0.85,
+                        width: old.identity.frame.width * 0.30, height: old.identity.frame.height * 0.15)
+                    guard [header, controlled.1, safetyRegion, send].allSatisfy({ visualCovered($0, by: focusedFrame.capturedRegions ?? []) }) else {
+                        throw fail("edit_precondition_unverified", "Complete post-click recipient, composer, security and Send regions are required")
+                    }
+                    let focusedProof = try ocrRegions(focusedFrame, identity: old.identity,
+                        regions: [header, controlled.1, safetyRegion, send], measurePerformance: true, postEditComposerProof: true)
+                    recordOCRStages("type_focus_", focusedProof.stageMS)
+                    guard focusedProof.regionRows.allSatisfy({ $0.count < 128 && $0.allSatisfy({ ($0["text"] as? String).map { $0.count < 1000 } == true }) }) else {
+                        throw fail("edit_precondition_unverified", "Post-click composer evidence is incomplete")
+                    }
+                    try denySensitiveRows(focusedProof.regionRows[2], region: controlled.1)
+                    let title = try string(request, "chat_title")!
+                    guard focusedProof.regionRows[0].filter({ ($0["text"] as? String).map { visualNormalizedText($0) == visualNormalizedText(title) } == true }).count == 1,
+                          focusedProof.regionRows[3].contains(where: { row in
+                              guard let text = row["text"] as? String, text.contains("发送"),
+                                    let bounds = try? visualRect(row["bounds"]) else { return false }
+                              return bounds.minY >= old.identity.frame.minY + old.identity.frame.height * 0.70 &&
+                                  bounds.minX >= old.identity.frame.minX + old.identity.frame.width * 0.40
+                          }) else {
+                        throw fail("edit_recipient_changed", "Exact recipient and Send must remain visible after focusing the composer")
+                    }
+                    inputEvidenceFrame = focusedFrame
+                    freshControlRows = focusedProof.regionRows[2]
+                    try guardUnchangedFocus(count)
+                    try guardPoint(point, snapshot: old)
+                    guard try currentSceneMatches(focusedFrame, identity: old.identity, helper: helper) else {
+                        throw fail("visual_target_changed", "Window scene changed during post-click verification")
+                    }
+                    let composerRows = visualRowsWithoutEmptyComposerHint(focusedFrame, window: old.identity.frame,
+                        rows: focusedProof.regionRows[1], now: ProcessInfo.processInfo.systemUptime)
+                    let actualDraft = composerRows.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                    if !actualDraft.isEmpty {
+                        let observed = try makeSnapshot(focusedFrame, target: target, helper: helper,
+                            anchors: old.anchors, confirmed: old.confirmed, continuation: old, preparedRows: focusedProof.rows)
+                        var receipt = json(observed, rows: visualMergeOCRRows([composerRows, focusedProof.regionRows[0]]))
+                        receipt["ocr_scope"] = "post_action_recipient_and_complete_composer"
+                        receipt["ocr_regions"] = [header, controlled.1].map { rectJSON($0) }
+                        receipt["ocr_truncated"] = false; receipt["input_eligible"] = false
+                        receipt["atomic_composer_precondition_failed"] = true
+                        receipt["composer_focus_events_posted"] = composerFocusEvents; receipt["text_events_posted"] = 0
+                        receipt["events_posted"] = count; receipt["value_verified"] = false
+                        receipt["edit_recipient_verified"] = true; receipt["edit_recipient"] = title
+                        receipt["edit_proof_snapshot_id"] = observed.id; receipt["automatic_replay_allowed"] = false
+                        snapshot = nil; selectedInput = nil; selectedInputRevision = nil
+                        return receipt
+                    }
+                    selectedInput = (old.identity, controlled.0, controlled.1, old.focusedWindow)
+                    actionStageMS["atomic_focus_and_complete_pretype_proof"] = (ProcessInfo.processInfo.systemUptime - focusStarted) * 1000
+                }
+                let inputRows = controlled.0 == "chat_composer" ? visualRowsWithoutEmptyComposerHint(inputEvidenceFrame,
                     window: old.identity.frame, rows: freshControlRows, now: ProcessInfo.processInfo.systemUptime) : freshControlRows
                 let searchRows = replaceSearch ? try ocr(guardFrame, identity: old.identity, region: verificationRegion) : inputRows
                 let beforeText = searchRows.compactMap { $0["text"] as? String }.joined(separator: "\n")
@@ -3963,6 +4078,7 @@ final class VisualDesktop {
                 var index = 0
                 while index < units.count {
                     try guardUnchangedFocus(count)
+                    typingStarted = true
                     var end = min(index + 20, units.count)
                     if end < units.count && units[end - 1] >= 0xD800 && units[end - 1] <= 0xDBFF { end -= 1 }
                     var chunk = Array(units[index..<end])
@@ -4253,6 +4369,28 @@ final class VisualDesktop {
                     try helper.post(wheel, target: target); count += 1
                 }
             }
+            if submit, let started = inputDispatchStarted, let finished = inputDispatchFinished {
+                snapshot = nil; selectedInput = nil; selectedInputRevision = nil; searchActivation = nil
+                var receipt = try visualPostedSubmitReceipt(identity: old.identity, events: count,
+                    started: started, finished: finished, now: { ProcessInfo.processInfo.systemUptime }) {
+                        try helper.monitor.check()
+                        try helper.verify(target, focusedWindow: false)
+                        guard try self.selectedIdentity(target) == old.identity else {
+                            throw fail("visual_target_changed", "Target changed after Return")
+                        }
+                        try helper.denySecure(target.window)
+                    }
+                receipt["submit_guard_frame_reused"] = submitGuardFrameReused
+                receipt["continuous_submit_proof_reused"] = continuousSubmitReused
+                receipt["continuous_submit_proof_frame_age_ms"] = continuousProofFrameAgeMS.map { $0 as Any } ?? NSNull()
+                receipt["submit_preinput_ms"] = (started - actionStarted) * 1000
+                var stages = ["submit_preinput": (started - actionStarted) * 1000,
+                    "submit_event_dispatch": (finished - started) * 1000,
+                    "submit_postinput": (ProcessInfo.processInfo.systemUptime - finished) * 1000]
+                for (key, value) in actionStageMS { stages[key.hasPrefix("submit_") ? key : "submit_" + key] = value }
+                receipt["native_stage_ms"] = stages
+                return receipt
+            }
             try helper.monitor.check()
             try helper.verify(target, focusedWindow: false)
             guard try selectedIdentity(target) == old.identity else { throw fail("visual_target_changed", "Target changed after visual events") }
@@ -4459,6 +4597,11 @@ final class VisualDesktop {
             if replaceSearch { result["value_ocr_region"] = rectJSON(verificationRegion) }
             if result["ocr_truncated"] == nil { result["ocr_truncated"] = roiRows.count > 100 }
             result["events_posted"] = count; result["action_accepted"] = count > 0
+            if focusBeforeType {
+                result["composer_focus_events_posted"] = composerFocusEvents
+                result["text_events_posted"] = count - composerFocusEvents
+                result["atomic_composer_edit"] = true
+            }
             if submit {
                 result["submit_guard_frame_reused"] = submitGuardFrameReused
                 result["continuous_submit_proof_reused"] = continuousSubmitReused
@@ -4520,6 +4663,10 @@ final class VisualDesktop {
             let underlying = error as? HelperError ?? fail("visual_operation_failed", error.localizedDescription)
             var details = underlying.details
             details["events_posted"] = count; details["input_may_be_partial"] = count > 0
+            if focusBeforeType {
+                details["composer_focus_events_posted"] = composerFocusEvents
+                details["text_events_posted"] = count - composerFocusEvents
+            }
             details["automatic_replay_allowed"] = false; details["value_verified"] = false
             if prefixPlan != nil {details["prefix_deleted"]=false;details["delete_events_posted"]=deleteEvents}
             if clearingDraft {
@@ -4563,6 +4710,16 @@ final class VisualDesktop {
         _ = try integer(request, "max_age_ms", default: 5000, range: 1...5000)
         if command == "visual_type_text" {
             let replaceSearch = try boolean(request, "replace_search")
+            let focusBeforeType = try boolean(request, "focus_before_type")
+            if focusBeforeType {
+                guard kind == "chat_composer", !replaceSearch,
+                      try string(request, "expected_draft", required: false) == "",
+                      let title = try string(request, "chat_title"), title.count <= 128,
+                      !title.unicodeScalars.contains(where: { CharacterSet.controlCharacters.union(.newlines).contains($0) }),
+                      try string(request, "text") == string(request, "expected_text") else {
+                    throw fail("invalid_request", "focus_before_type requires composer, expected_draft exactly empty, exact chat_title and text equal to expected_text")
+                }
+            }
             guard !replaceSearch || kind == "search" else { throw fail("invalid_request", "replace_search:true is only allowed for a previously clicked search control") }
             let text = try string(request, "text")!; let expected = try string(request, "expected_text")!
             guard !replaceSearch || text == expected else { throw fail("invalid_request", "replace_search:true requires text equal to the complete expected_text query") }

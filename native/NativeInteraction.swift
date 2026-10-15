@@ -70,10 +70,57 @@ private final class NativeFocusNoticePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-// A transient, nonactivating notice. Creation never brings an editable app
-// forward; callers retain and verify the original focus throughout the wait.
+struct NativeFocusNoticeSurface {
+    let windowID: CGWindowID
+    let pid: pid_t
+    let frame: CGRect
+    let layer: Int
+}
+
+// Only the exact live panel is transparent to target-only capture/point guards.
+// A same-PID window, a recycled ID or an unrecognized geometry is not exempt.
+func nativeFocusNoticeWindowMatches(_ row: [String: Any], surface: NativeFocusNoticeSurface?) -> Bool {
+    guard let surface,
+          (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value == surface.windowID,
+          (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == surface.pid,
+          (row[kCGWindowLayer as String] as? NSNumber)?.intValue == surface.layer,
+          let raw = row[kCGWindowBounds as String] as? [String: Any],
+          CGRect(dictionaryRepresentation: raw as CFDictionary) == surface.frame else { return false }
+    return true
+}
+
+func nativeFocusNoticeWindowMatches(_ row: [String: Any]) -> Bool {
+    nativeFocusNoticeWindowMatches(row, surface: NativeFocusNotice.currentSurface)
+}
+
+enum NativeFocusNoticeStage: String {
+    case preparing, controlling, verifying, yielded
+    var message: String {
+        switch self {
+        case .preparing: return "Codex 即将接管，请暂停输入\n您停手后才会切换应用；继续输入则保持原焦点。"
+        case .controlling: return "Codex 正在操作桌面\n请暂缓输入；主动接管会停止后续操作。"
+        case .verifying: return "焦点已归还，正在确认结果\n您可以继续使用电脑。"
+        case .yielded: return "Codex 已停止桌面输入\n正在结束本次操作。"
+        }
+    }
+}
+
+// Operation-owned, nonactivating and pass-through. This displays ownership;
+// it never creates an input capability or grants a capture exemption by PID.
 final class NativeFocusNotice {
+    private static weak var current: NativeFocusNotice?
+    static var currentSurface: NativeFocusNoticeSurface? {
+        guard let value = current, value.panel.isVisible, value.panel.ignoresMouseEvents,
+              value.panel.windowNumber > 0, let first = NSScreen.screens.first else { return nil }
+        let frame = value.panel.frame
+        return NativeFocusNoticeSurface(windowID: CGWindowID(value.panel.windowNumber),
+            pid: ProcessInfo.processInfo.processIdentifier,
+            frame: CGRect(x: frame.minX, y: first.frame.maxY - frame.maxY, width: frame.width, height: frame.height),
+            layer: Int(value.panel.level.rawValue))
+    }
     private let panel: NativeFocusNoticePanel
+    private let label: NSTextField
+    private(set) var stage = NativeFocusNoticeStage.preparing
     init() throws {
         guard Thread.isMainThread, let screen = NSScreen.main else {
             throw fail("handoff_notice_unavailable", "A visible handoff notice requires the main desktop thread")
@@ -88,15 +135,23 @@ final class NativeFocusNotice {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97)
         panel.isOpaque = false; panel.hasShadow = true
-        let label = NSTextField(labelWithString: "Codex 即将接管，请暂停输入\n您停手后才会切换应用；继续输入则保持原焦点。")
+        label = NSTextField(labelWithString: NativeFocusNoticeStage.preparing.message)
         label.frame = NSRect(x: 16, y: 10, width: width - 32, height: 44)
         label.font = NSFont.systemFont(ofSize: 13); label.alignment = .center
         label.maximumNumberOfLines = 2; label.isSelectable = false
         panel.contentView?.addSubview(label)
         panel.orderFrontRegardless(); panel.displayIfNeeded()
         guard panel.isVisible else { panel.close(); throw fail("handoff_notice_unavailable", "The nonactivating handoff notice was not displayed") }
+        Self.current = self
     }
-    func close() { panel.orderOut(nil); panel.close() }
+    func update(_ next: NativeFocusNoticeStage) {
+        stage = next; label.stringValue = next.message; panel.displayIfNeeded()
+    }
+    var status: [String: Any] { ["visible": panel.isVisible, "stage": stage.rawValue, "nonactivating": true, "mouse_passthrough": panel.ignoresMouseEvents] }
+    func close() {
+        if Self.current === self { Self.current = nil }
+        panel.orderOut(nil); panel.close()
+    }
 }
 
 func nativeDialogRole(_ role: String?, subrole: String?, modal: Bool?) -> Bool {
@@ -225,6 +280,17 @@ func nativeInteractionSelfTests() -> [String: Any] {
     let deep = Dictionary(uniqueKeysWithValues: (1...40).map { ($0, $0 + 1) })
     check("ancestry_depth_limit_is_fail_closed", !linked(1, root: 41, parents: deep))
     check("exact_dialog_root_identity_is_allowed", linked(1, root: 1, parents: [:]))
+    let surface = NativeFocusNoticeSurface(windowID: 91, pid: 97, frame: CGRect(x: 10, y: 20, width: 350, height: 64), layer: 25)
+    let panelRow: [String: Any] = [kCGWindowNumber as String: 91, kCGWindowOwnerPID as String: 97,
+        kCGWindowBounds as String: surface.frame.dictionaryRepresentation, kCGWindowLayer as String: 25]
+    check("only_exact_live_notice_surface_is_exempt", nativeFocusNoticeWindowMatches(panelRow, surface: surface))
+    check("closed_notice_never_exempts_an_old_window", !nativeFocusNoticeWindowMatches(panelRow, surface: nil))
+    for field in [kCGWindowNumber, kCGWindowOwnerPID, kCGWindowLayer] {
+        var changed = panelRow; changed[field as String] = 999
+        check("notice_" + (field as String) + "_mismatch_denied", !nativeFocusNoticeWindowMatches(changed, surface: surface))
+    }
+    var moved = panelRow; moved[kCGWindowBounds as String] = surface.frame.offsetBy(dx: 1, dy: 0).dictionaryRepresentation
+    check("moved_or_recycled_notice_surface_denied", !nativeFocusNoticeWindowMatches(moved, surface: surface))
     return ["ok": cases.allSatisfy { $0["passed"] as? Bool == true }, "case_count": cases.count, "cases": cases,
         "events_posted": 0, "event_tap_created": false, "UI_created": false, "AX_reads_executed": false]
 }

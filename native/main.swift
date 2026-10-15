@@ -537,6 +537,40 @@ func focusRestoreSuppression(hasRecord:Bool,claimComplete:Bool,interrupted:Bool,
     if !topologyMatches{return "display_topology_changed"}
     return nil
 }
+
+// This only permits undoing this command's accepted activation. It never
+// completes an input claim or relaxes completed-claim restoration above.
+func failedFocusReturnSuppression(sameScope: Bool, activationAccepted: Bool, activityUnchanged: Bool,
+                                 targetVerified: Bool, landingVerified: Bool,
+                                 originVerified: Bool, topologyMatches: Bool) -> String? {
+    if !sameScope { return "focus_acquisition_scope_changed" }
+    if !activationAccepted { return "focus_activation_unconfirmed" }
+    if !activityUnchanged { return "user_takeover" }
+    if !targetVerified { return "task_target_mismatch" }
+    if !landingVerified { return "task_focus_changed" }
+    if !originVerified { return "previous_window_unavailable" }
+    if !topologyMatches { return "display_topology_changed" }
+    return nil
+}
+
+struct FocusAcquisitionActivity {
+    let interactionRevision: UInt64
+    let quietRevision: UInt64
+    let claimTimestamp: CGEventTimestamp
+}
+
+struct FocusAcquisitionLanding {
+    let window: AXUIElement
+    let frame: CGRect
+}
+
+struct FailedFocusAcquisition {
+    let taskID: String
+    let operationID: String
+    let target: Target
+    let landings: [FocusAcquisitionLanding]
+    let activity: FocusAcquisitionActivity
+}
 let feishuSearchWindowTitle = "ModalWebViewWidget - search:search-command-bar:default"
 
 // Only a successfully posted navigation in the owned search modal can create
@@ -789,12 +823,13 @@ final class InputMonitor {
         lock.lock(); defer { lock.unlock() }; return focusQuietState
     }
 
-    func prepareExplicitFocus(quietRevision: UInt64?, continuing: Bool) throws {
+    func prepareExplicitFocus(quietRevision: UInt64?, continuing: Bool) throws -> FocusAcquisitionActivity {
         guard available else { throw fail("input_monitoring_unavailable", "Input monitoring is required before explicit focus") }
         lock.lock(); defer { lock.unlock() }
         if continuing {
             guard sharedClaimActive, interruption == nil else { throw fail("user_interrupted", "The existing focus claim is no longer continuous") }
-            return
+            return FocusAcquisitionActivity(interactionRevision: externalInteractionRevision,
+                quietRevision: focusQuietState.revision, claimTimestamp: claimEventTimestamp ?? 0)
         }
         guard quietRevision == focusQuietState.revision, focusQuietState.quiet(at: ProcessInfo.processInfo.systemUptime) else {
             throw fail("user_interrupted", "User input continued after the handoff notice; original focus was retained")
@@ -807,6 +842,18 @@ final class InputMonitor {
         interruption = nil; focusHandoffPending = true
         scopedMode = .sharedHID; scopedTarget = nil; scopedCache = nil; scopedInterruption = nil
         sharedActivity.reset(at: timestamp); scopedActivity.reset(at: timestamp)
+        return FocusAcquisitionActivity(interactionRevision: externalInteractionRevision,
+            quietRevision: focusQuietState.revision, claimTimestamp: timestamp)
+    }
+
+    func focusAcquisitionUnchanged(_ baseline: FocusAcquisitionActivity) -> Bool {
+        guard available else { return false }
+        lock.lock(); defer { lock.unlock() }
+        return interruption == nil && focusHandoffPending && !sharedClaimActive &&
+            baseline.claimTimestamp > 0 && claimEventTimestamp == baseline.claimTimestamp &&
+            externalInteractionRevision == baseline.interactionRevision &&
+            focusQuietState.revision == baseline.quietRevision &&
+            focusQuietState.quiet(at: ProcessInfo.processInfo.systemUptime)
     }
 
     func completeExplicitFocus(retainClaim: Bool) throws {
@@ -1085,10 +1132,13 @@ final class DesktopHelper {
     // input capability. Actual posts call scope.verify directly.
     var backgroundTargetReadDepth = 0
     private var previousFocus: PreviousFocusRecord?
+    private var focusNotice: NativeFocusNotice?
+    private var focusNoticeOwner: (task: String, operation: String)?
     private let legacyRuntimeTaskID = "legacy-native-session-" + UUID().uuidString
     private var runtimeTaskID: String?
     private var runtimeOperationID: String?
     private var currentRuntimeTaskID: String { runtimeTaskID ?? legacyRuntimeTaskID }
+    var interactionNoticeStatus: [String: Any] { focusNotice?.status ?? ["visible": false] }
     private var cache: [String: CachedElement] = [:]
     private var inspectedDialogs: [NativeInspectedDialog] = []
     private var acceptedAXWindowTransition: (task: String, operation: String, pid: pid_t, bundle: String, revision: UInt64, until: Double)?
@@ -1100,6 +1150,40 @@ final class DesktopHelper {
     var source: CGEventSource? = CGEventSource(stateID: .privateState)
     let commands: Set<String> = ["status", "ping", "inspect", "focus", "resume", "press", "click", "scroll", "set_text", "select_text", "type_text", "clear_text", "submit_text", "key", "batch", "wait_text", "background_observe", "background_type_text", "background_chat_edit", "background_visual_read", "visual_read", "visual_click", "visual_type_text", "visual_key", "visual_scroll"]
     let mutationCommands: Set<String> = ["focus", "resume", "press", "click", "scroll", "set_text", "type_text", "clear_text", "submit_text", "key", "batch", "visual_click", "visual_type_text", "visual_key", "visual_scroll"]
+
+    func closeFocusNotice() {
+        focusNotice?.close(); focusNotice = nil; focusNoticeOwner = nil
+    }
+
+    func prepareFocusNoticeRelease() {
+        // Shutdown owns this helper's existing panel even after handle() has
+        // restored its transport context. Never create a read-only notice.
+        focusNotice?.update(.yielded)
+    }
+
+    private func showFocusNotice(_ stage: NativeFocusNoticeStage) throws {
+        guard let operation = runtimeOperationID else {
+            throw fail("handoff_notice_unavailable", "A handoff notice requires operation ownership")
+        }
+        if focusNoticeOwner?.task != currentRuntimeTaskID || focusNoticeOwner?.operation != operation {
+            closeFocusNotice()
+            focusNotice = try NativeFocusNotice()
+            focusNoticeOwner = (currentRuntimeTaskID, operation)
+        }
+        focusNotice?.update(stage)
+    }
+
+    private func updateFocusNotice(_ stage: NativeFocusNoticeStage) {
+        guard focusNoticeOwner?.task == currentRuntimeTaskID,
+              focusNoticeOwner?.operation == runtimeOperationID else { return }
+        focusNotice?.update(stage)
+    }
+
+    private func finishFocusNotice() {
+        guard focusNoticeOwner?.task == currentRuntimeTaskID,
+              focusNoticeOwner?.operation == runtimeOperationID else { return }
+        closeFocusNotice()
+    }
 
     func currentDisplays() throws -> DisplaySnapshot {
         let current = try activeDisplays()
@@ -2182,7 +2266,53 @@ final class DesktopHelper {
         return true // No activation, new claim, monitor reset or input.
     }
 
-    func restorePreviousFocus(_ request:[String:Any]) throws -> [String:Any] {
+    private func acquisitionWindowMatches(_ landing: FocusAcquisitionLanding, root: AXUIElement, pid: pid_t) -> Bool {
+        var owner: pid_t = 0
+        return AXUIElementGetPid(landing.window, &owner) == .success && owner == pid &&
+            axBounds(landing.window) == landing.frame && windows(root).contains { CFEqual($0, landing.window) }
+    }
+
+    private func failedAcquisitionFocusMatches(_ proof: FailedFocusAcquisition, previous: PreviousFocusRecord,
+                                               allowOrigin: Bool, allowUnsettled: Bool = false) -> Bool {
+        guard let pid = foregroundMetadata().pid,
+              let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return false }
+        let targetFront = pid == proof.target.pid && app.bundleIdentifier == proof.target.bundleID &&
+            axBool(proof.target.axApplication, kAXFrontmostAttribute) == true
+        let originFront = allowOrigin && pid == previous.application.processIdentifier &&
+            app.bundleIdentifier == previous.originBundleID && axBool(previous.root, kAXFrontmostAttribute) == true
+        guard targetFront || originFront else { return false }
+        let root = targetFront ? proof.target.axApplication : previous.root
+        guard let focused = axElement(root, kAXFocusedWindowAttribute), let frame = axBounds(focused) else {
+            return allowUnsettled // Read-only settling, never permission to raise a window.
+        }
+        let current = FocusAcquisitionLanding(window: focused, frame: frame)
+        guard acquisitionWindowMatches(current, root: root, pid: pid) else { return false }
+        if targetFront, proof.landings.contains(where: { CFEqual($0.window, focused) && $0.frame == frame }) { return true }
+        return originFront && previous.window.map { CFEqual($0, focused) } == true && previous.frame == frame
+    }
+
+    private func failedAcquisitionReturnReason(_ proof: FailedFocusAcquisition, previous: PreviousFocusRecord,
+                                               allowOrigin: Bool, allowUnsettled: Bool = false) -> String? {
+        let sameScope = !previous.claimComplete && previous.runtimeTaskID == proof.taskID &&
+            currentRuntimeTaskID == proof.taskID && previous.runtimeOperationID == proof.operationID &&
+            runtimeOperationID == proof.operationID
+        let targetVerified = proof.target.pid == previous.task.pid && proof.target.bundleID == previous.task.bundleID &&
+            !proof.target.application.isTerminated && proof.target.application.bundleIdentifier == proof.target.bundleID &&
+            CFEqual(proof.target.axApplication, previous.task.axApplication) && CFEqual(proof.target.window, previous.task.window) &&
+            !proof.landings.isEmpty && proof.landings.count <= 2 &&
+            proof.landings.contains { CFEqual($0.window, proof.target.window) } &&
+            proof.landings.allSatisfy { acquisitionWindowMatches($0, root: proof.target.axApplication, pid: proof.target.pid) }
+        let originVerified = !previous.application.isTerminated && previous.application.bundleIdentifier == previous.originBundleID &&
+            previous.window.flatMap { window in previous.frame.map { FocusAcquisitionLanding(window: window, frame: $0) } }
+                .map { acquisitionWindowMatches($0, root: previous.root, pid: previous.application.processIdentifier) } == true
+        return failedFocusReturnSuppression(sameScope: sameScope, activationAccepted: true,
+            activityUnchanged: monitor.focusAcquisitionUnchanged(proof.activity), targetVerified: targetVerified,
+            landingVerified: failedAcquisitionFocusMatches(proof, previous: previous, allowOrigin: allowOrigin, allowUnsettled: allowUnsettled),
+            originVerified: originVerified,
+            topologyMatches: (try? currentDisplays().signature) == previous.topology && proof.target.displaySignature == previous.topology)
+    }
+
+    private func restorePreviousFocus(_ request:[String:Any], failedAcquisition: FailedFocusAcquisition? = nil) throws -> [String:Any] {
         let bundle=try string(request,"app")!
         if let previous=previousFocus, !focusRecordTaskMatches(previous.runtimeTaskID, currentRuntimeTaskID) {
             // Before adoption, defer cleanup, or any UI access: the other
@@ -2192,7 +2322,7 @@ final class DesktopHelper {
                 "owned_navigation_focus_updated":false,"events_posted":0]
         }
         var ownedNavigationUpdated = false
-        if bundle == "com.bytedance.macos.feishu" && previousFocus?.task.bundleID == bundle {
+        if failedAcquisition == nil && bundle == "com.bytedance.macos.feishu" && previousFocus?.task.bundleID == bundle {
             ownedNavigationUpdated = adoptOwnedFeishuMainReturn()
             ownedNavigationUpdated = adoptOwnedFeishuSearchOpen() || ownedNavigationUpdated
             ownedNavigationUpdated = previousFocus?.ownedFeishuFocusUpdated == true || ownedNavigationUpdated
@@ -2203,6 +2333,7 @@ final class DesktopHelper {
         var restoreWindow=previous?.window,restoreFrame=previous?.frame
         var originalWindowUnavailable=false
         func result(_ restored:Bool,_ reason:String,_ attempted:Bool=false)->[String:Any]{
+            updateFocusNotice(restored ? .verifying : .yielded)
             var value: [String: Any] = ["focus_restored":restored,"restore_reason":reason,"focus_restore_attempted":attempted,"events_posted":0]
             value["owned_navigation_focus_updated"] = ownedNavigationUpdated
             value["owned_navigation_diagnostic"] = previous?.ownedFeishuReturnDiagnostic.map { $0 as Any } ?? NSNull()
@@ -2215,6 +2346,12 @@ final class DesktopHelper {
             value["original_window_reference_unavailable"] = originalWindowUnavailable
             value["focus_restored_app"] = restored
             value["window_verified"] = restored && restoreWindow != nil
+            value["focus_return_materialized_uptime_ms"] = ProcessInfo.processInfo.systemUptime * 1000
+            if let failedAcquisition {
+                value["failed_acquisition_return"] = true
+                value["acquisition_target_pid"] = failedAcquisition.target.pid
+                value["acquisition_same_command"] = true
+            }
             return value
         }
         guard let previous else{return result(false,"no_previous_focus")}
@@ -2229,21 +2366,37 @@ final class DesktopHelper {
         }
         // An invalidated AX wrapper does not prove its application disappeared.
         // App-only fallback never selects a replacement window or claims one.
-        let suppression=focusRestoreSuppression(hasRecord:true,claimComplete:previous.claimComplete,
-            interrupted:monitor.reason != nil || !monitor.available,taskStillFocused:taskStillFocused(previous.task),
-            originExists:originAppExists,topologyMatches:topology?.signature==previous.topology)
+        let suppression: String?
+        if let failedAcquisition {
+            suppression = failedAcquisitionReturnReason(failedAcquisition, previous: previous, allowOrigin: false)
+        } else {
+            suppression=focusRestoreSuppression(hasRecord:true,claimComplete:previous.claimComplete,
+                interrupted:monitor.reason != nil || !monitor.available,taskStillFocused:taskStillFocused(previous.task),
+                originExists:originAppExists,topologyMatches:topology?.signature==previous.topology)
+        }
         if let suppression{return result(false,suppression)}
-        do {
+        func checkReturnState(beforeActivation: Bool = false, beforeRaise: Bool = false) throws {
             try monitor.check()
-            guard taskStillFocused(previous.task) else{return result(false,"task_focus_changed")}
-            if previous.application.processIdentifier==previous.task.pid,let window=restoreWindow,CFEqual(window,previous.task.window){return result(true,"already_previous_window")}
+            if let failedAcquisition, let reason = failedAcquisitionReturnReason(failedAcquisition, previous: previous,
+                    allowOrigin: !beforeActivation, allowUnsettled: !beforeActivation && !beforeRaise) {
+                throw fail(reason == "user_takeover" ? "user_interrupted" : reason, "Failed acquisition no longer owns a safe return")
+            }
+        }
+        do {
+            try checkReturnState(beforeActivation: true)
+            if failedAcquisition == nil && !taskStillFocused(previous.task) {return result(false,"task_focus_changed")}
+            if previous.application.processIdentifier==previous.task.pid,let window=restoreWindow,CFEqual(window,previous.task.window),
+               failedAcquisition == nil || axElement(previous.root, kAXFocusedWindowAttribute).map({ CFEqual($0, window) }) == true {
+                return result(true,"already_previous_window")
+            }
+            try checkReturnState(beforeActivation: true)
             guard previous.application.activate(options:[.activateIgnoringOtherApps]) else{return result(false,"previous_activation_failed",true)}
             let deadline=ProcessInfo.processInfo.systemUptime+0.4
             AXUIElementSetMessagingTimeout(previous.root,0.12)
             if let window=previous.window { AXUIElementSetMessagingTimeout(window,0.12) }
             defer { AXUIElementSetMessagingTimeout(previous.root,0.8); if let window=previous.window {AXUIElementSetMessagingTimeout(window,0.8)} }
             repeat {
-                try monitor.check()
+                try checkReturnState()
                 guard try currentDisplays().signature==previous.topology else{return result(false,"display_topology_changed",true)}
                 guard !previous.application.isTerminated,previous.application.bundleIdentifier==previous.originBundleID else{return result(false,"previous_app_unavailable",true)}
                 if let window=restoreWindow,let frame=restoreFrame,axBounds(window) != frame {
@@ -2252,23 +2405,23 @@ final class DesktopHelper {
                 if restoreWindow == nil {
                     let actualPID=foregroundMetadata().pid
                     let actualBundle=actualPID.flatMap{NSRunningApplication(processIdentifier:$0)?.bundleIdentifier}
-                    try monitor.check()
+                    try checkReturnState()
                     if focusOriginAppMatches(pid:previous.application.processIdentifier,bundle:previous.originBundleID,actualPID:actualPID,actualBundle:actualBundle) {
                         return result(true,originalWindowUnavailable ? "previous_window_unavailable_app_restored":"previous_app_verified_window_unknown",true)
                     }
                 } else if let window=restoreWindow {
                     let originFrontmost=axBool(previous.root,kAXFrontmostAttribute)==true
                     let originalWindowFocused=originFrontmost && axElement(previous.root,kAXFocusedWindowAttribute).map({CFEqual($0,window)})==true
-                    try monitor.check()
+                    try checkReturnState()
                     if originalWindowFocused { return result(true,"previous_window_verified",true) }
                     // One raise only after actual activation; an unknown AX
                     // result is verified without replaying activation or raise.
                     if focusRestoreShouldRaise(originFrontmost:originFrontmost,originalWindowFocused:originalWindowFocused,raiseAttempted:raiseResult != nil),
                        ProcessInfo.processInfo.systemUptime<deadline {
                         if windows(previous.root).contains(where:{CFEqual($0,window)}) {
-                            try monitor.check()
+                            try checkReturnState(beforeRaise: true)
                             if ProcessInfo.processInfo.systemUptime<deadline { raiseResult=AXUIElementPerformAction(window,kAXRaiseAction as CFString) }
-                            try monitor.check()
+                            try checkReturnState()
                         } else {
                             restoreWindow=nil;restoreFrame=nil;originalWindowUnavailable=true
                         }
@@ -2319,8 +2472,7 @@ final class DesktopHelper {
         let originRoot = AXUIElementCreateApplication(origin)
         AXUIElementSetMessagingTimeout(originRoot, 0.12)
         let originWindow = axElement(originRoot, kAXFocusedWindowAttribute)
-        let notice = try NativeFocusNotice()
-        defer { notice.close() }
+        try showFocusNotice(.preparing)
         let start = ProcessInfo.processInfo.systemUptime
         repeat {
             guard monitor.available, foregroundMetadata().pid == origin,
@@ -2357,10 +2509,23 @@ final class DesktopHelper {
         let handoff = continuing ? nil : try waitForFocusHandoff(target)
         try capturePreviousFocus(target)
         var completed=false
+        var failedAcquisition: FailedFocusAcquisition?
         defer{if !completed {previousFocus=nil;monitor.discardClaim()}}
-        try monitor.prepareExplicitFocus(quietRevision: handoff?.revision, continuing: continuing)
+        do {
+        guard let selectedFrame = axBounds(target.window) else { throw fail("window_mismatch", "Selected window geometry is unavailable before activation") }
+        var knownLandings = [FocusAcquisitionLanding(window: target.window, frame: selectedFrame)]
+        if let focused = axElement(target.axApplication, kAXFocusedWindowAttribute),
+           !CFEqual(focused, target.window), let frame = axBounds(focused) {
+            let landing = FocusAcquisitionLanding(window: focused, frame: frame)
+            if acquisitionWindowMatches(landing, root: target.axApplication, pid: target.pid) { knownLandings.append(landing) }
+        }
+        let activity = try monitor.prepareExplicitFocus(quietRevision: handoff?.revision, continuing: continuing)
         try verify(target, foreground: false, focusedWindow: false)
         guard target.application.activate(options: [.activateIgnoringOtherApps]) else {throw fail("activation_failed", "The running target application could not be activated")}
+        if !continuing, let operation = runtimeOperationID {
+            failedAcquisition = FailedFocusAcquisition(taskID: currentRuntimeTaskID, operationID: operation,
+                target: target, landings: knownLandings, activity: activity)
+        }
         let deadline = ProcessInfo.processInfo.systemUptime + 1
         var last: Error = fail("foreground_mismatch", "Focus did not settle")
         var selectionAttempted = false
@@ -2394,12 +2559,25 @@ final class DesktopHelper {
                     try monitor.check()
                     selectionResults["AXFocused_set_result"] = axResult(AXUIElementSetAttributeValue(target.window, kAXFocusedAttribute as CFString, kCFBooleanTrue))
                 }
+                // Some apps advertise the public focused-window setter on the
+                // app root instead of AXFocused on a window. Set only this
+                // already selected reference; verify(target) still reads focus.
+                var rootWritable = DarwinBoolean(false)
+                let rootWritableResult = AXUIElementIsAttributeSettable(target.axApplication, kAXFocusedWindowAttribute as CFString, &rootWritable)
+                selectionResults["AXFocusedWindow_settable_result"] = axResult(rootWritableResult)
+                selectionResults["AXFocusedWindow_settable"] = rootWritable.boolValue
+                if rootWritableResult == .success, rootWritable.boolValue {
+                    try monitor.check()
+                    selectionResults["AXFocusedWindow_set_result"] = axResult(AXUIElementSetAttributeValue(target.axApplication, kAXFocusedWindowAttribute as CFString, target.window))
+                    selectionResults["AXFocusedWindow_readback_matches"] = axElement(target.axApplication, kAXFocusedWindowAttribute).map { CFEqual($0, target.window) } == true
+                }
             }
             do {try verify(target)}
             catch {last=error;try monitor.check();_ = CFRunLoopRunInMode(.defaultMode,0.02,true);continue}
             try monitor.completeExplicitFocus(retainClaim:true)
             try verify(target) // New post-baseline input or focus loss is never reset.
             previousFocus?.claimComplete=true;completed=true
+            try showFocusNotice(.controlling)
             return ["app":target.bundleID,"target_pid":target.pid,"window_title":axString(target.window,kAXTitleAttribute) ?? "", "foreground_verified":true,"user_interruption_cleared":true,
                 "takeover_baseline":"before_target_activation","handoff_notice_shown":handoff != nil,
                 "handoff_wait_ms":handoff?.elapsedMS ?? 0,"continuous_task_focus_claim":continuing,
@@ -2417,6 +2595,19 @@ final class DesktopHelper {
             throw fail(failure.code, failure.message, details)
         }
         throw last
+        } catch {
+            let underlying = error as? HelperError ?? fail("focus_failed", error.localizedDescription)
+            var details = underlying.details
+            details["events_posted"] = 0
+            if !completed, let failedAcquisition {
+                // This executes while the acquisition baseline is still armed,
+                // before handle() ends the native command. It grants no input.
+                if let receipt = try? restorePreviousFocus(["app": target.bundleID], failedAcquisition: failedAcquisition) {
+                    details["focus_acquisition_return"] = receipt
+                }
+            }
+            throw fail(underlying.code, underlying.message, details)
+        }
     }
 
     func requireEvents() throws {
@@ -3313,8 +3504,12 @@ final class DesktopHelper {
             guard runtimeOperationID != nil else { throw fail("invalid_request", "Operation release requires runtime correlation") }
             visualWarmCaptureRelease()
             let released = visualCaptureDrain(timeout: 5)
-            guard released else { throw fail("visual_capture_release_timeout", "Capture cleanup is still pending before operation handoff", ["completion_unknown": true]) }
-            return ["capture_scope_released": true, "event_count": 0]
+            guard released else {
+                updateFocusNotice(.yielded)
+                throw fail("visual_capture_release_timeout", "Capture cleanup is still pending before operation handoff", ["completion_unknown": true])
+            }
+            finishFocusNotice()
+            return ["capture_scope_released": true, "notice_scope_released": true, "event_count": 0]
         }
         guard commands.contains(command) else { throw fail("unknown_command", "Unknown command: \(command)") }
         if command == "status" {
@@ -3322,7 +3517,8 @@ final class DesktopHelper {
             let frontmost = foregroundMetadata()
             let frontmostPID = frontmost.pid
             let frontmostBundle = frontmostPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
-            return ["version": "0.1.72", "arch": "x86_64", "persistent_jsonl": true, "capture_lifecycle": visualCaptureLifecycleStatus(),
+            return ["version": "0.1.73", "arch": "x86_64", "persistent_jsonl": true, "capture_lifecycle": visualCaptureLifecycleStatus(),
+                "interaction_notice": interactionNoticeStatus,
                 "permissions": ["accessibility": AXIsProcessTrusted(), "post_event": CGPreflightPostEventAccess(),
                     "listen_event": CGPreflightListenEventAccess(), "screen_capture": CGPreflightScreenCaptureAccess()],
                 "takeover_monitor_available": monitor.available,
@@ -4040,7 +4236,7 @@ if CommandLine.arguments.contains("--visual-visibility-self-test") {
 let helper = DesktopHelper()
 let ownPID = ProcessInfo.processInfo.processIdentifier
 let serviceInput = NativeServiceInput()
-serviceInput.onShutdown = { helper.monitor.stop() }
+serviceInput.onShutdown = { helper.prepareFocusNoticeRelease(); helper.monitor.stop() }
 while !serviceInput.shutdownRequested, let line = serviceInput.nextLine() {
     let start = ProcessInfo.processInfo.systemUptime
     var response: [String: Any] = ["id": NSNull(), "pid": ownPID]
@@ -4051,7 +4247,9 @@ while !serviceInput.shutdownRequested, let line = serviceInput.nextLine() {
             throw fail("invalid_json", "Each input line must be one JSON object")
         }
         response["id"] = request["id"] ?? NSNull()
-        response["result"] = try helper.handle(request)
+        var result = try helper.handle(request)
+        result["interaction_notice"] = helper.interactionNoticeStatus
+        response["result"] = result
         response["ok"] = true
     } catch {
         let error = error as? HelperError ?? fail("invalid_json", error.localizedDescription)
@@ -4072,6 +4270,8 @@ while !serviceInput.shutdownRequested, let line = serviceInput.nextLine() {
         break
     }
 }
+helper.prepareFocusNoticeRelease()
+helper.monitor.stop()
 helper.visual.stop()
 visualWarmCaptureRelease()
 // Pending starts own their cleanup until start and stop completion are known.
@@ -4079,4 +4279,5 @@ visualWarmCaptureRelease()
 while !visualCaptureDrain(timeout: 5, shuttingDown: true) {
     _ = CFRunLoopRunInMode(.defaultMode, 0.005, true)
 }
+helper.closeFocusNotice()
 helper.monitor.stop()
