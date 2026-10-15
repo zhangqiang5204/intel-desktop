@@ -329,9 +329,12 @@ class LearningStore:
 
     def analyze(self):
         scripts = self.list()["scripts"]
-        candidates = []
+        candidates, reusable = [], []
+        actions = {action: 0 for action in ("conversion", "repair", "verification", "reuse")}
         for row in scripts:
-            if row["status"] != "reusable":
+            if row["status"] == "reusable":
+                reason, action = "reuse_with_fresh_target_and_postconditions", "reuse"
+            else:
                 reason = ("use_noncredential_script_source" if "credential_source_denied" in row["safety_findings"]
                           else "use_supported_script_extension" if "source_extension_not_supported" in row["safety_findings"]
                           else "restore_registered_source" if not row["source_available"]
@@ -339,14 +342,23 @@ class LearningStore:
                           else "convert_to_desktop_plan" if row["format"] != "desktop_plan/v1"
                           else "repair_plan_parameter_contract" if row["safety_findings"]
                           else "repair_execution_failure" if row["failures"] else "verify_current_digest")
-                score = min(100, row["failures"] * 15 + row["successes"] * 3 + (20 if reason == "redact_hardcoded_values" else 0))
-                candidates.append({"id": row["id"], "app": row["app"], "source_path": row["source_path"],
-                                   "source_sha256": row["source_sha256"], "language": row["language"], "purpose": row["purpose"],
-                                   "status": row["status"], "priority": score, "recommendation": reason,
-                                   "safety_findings": row["safety_findings"], "successes": row["successes"],
-                                   "failures": row["failures"], "verification_count": row["verification_count"],
-                                   "automatic_execution": False})
+                action = ("conversion" if reason == "convert_to_desktop_plan" else
+                          "verification" if reason == "verify_current_digest" else "repair")
+            actions[action] += 1
+            score = min(100, row["failures"] * 15 + row["successes"] * 3 + (20 if reason == "redact_hardcoded_values" else 0))
+            item = {"id": row["id"], "app": row["app"], "source_path": row["source_path"],
+                    "source_sha256": row["source_sha256"], "language": row["language"], "purpose": row["purpose"],
+                    "status": row["status"], "priority": score, "recommendation": reason, "next_action": action,
+                    "safety_findings": row["safety_findings"], "successes": row["successes"],
+                    "failures": row["failures"], "verification_count": row["verification_count"],
+                    "verified_successes": row["verified_successes"], "verified_task_count": len(row["verified_task_ids"]),
+                    "last_operation_id": row["last_operation_id"], "last_error_code": row["last_error_code"],
+                    "last_execution_verified": row["last_execution_verified"], "automatic_execution": False}
+            (reusable if action == "reuse" else candidates).append(item)
         candidates.sort(key=lambda x: (-x["priority"], x["id"]))
+        reusable.sort(key=lambda x: (x["app"], x["id"]))
         return {"registered_count": len(scripts), "levels": {level: sum(r["status"] == level for r in scripts) for level in ("candidate", "verified", "reusable")},
                 "candidates": candidates[:30], "omitted_candidates": max(0, len(candidates) - 30),
+                "reusable_scripts": reusable[:30], "omitted_reusable_scripts": max(0, len(reusable) - 30),
+                "next_action_counts": actions, "evidence_basis": "current_registered_source_digest",
                 "automatic_execution": False, "source_contents_retained": False}

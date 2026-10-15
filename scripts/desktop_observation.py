@@ -13,7 +13,7 @@ WECHAT = "com.tencent.xinWeChat"
 FEISHU = "com.bytedance.macos.feishu"
 OBSERVE_TOOL = {
     "name": "desktop_observe",
-    "description": "Observe a currently authorized native app without activating it or posting input. Known WeChat/Feishu states use chat semantics; other apps return bounded actionable AX elements and an optional safely masked exact-window image for the current model to identify controls and choose the next bounded step. Image failures preserve AX. Observe a newly opened dialog again before using its new controls. This tool supplies no model service or input authorization; chat is an assertion, never navigation.",
+    "description": "Observe a currently authorized native app without activating it or posting input. Known WeChat/Feishu states use chat semantics; other apps return actionable AX and optional masked-window pixels for the current model's visual/OCR reasoning. Generic results include continuation guidance: one observation or action is a stage, so assess the user's requested outcome and continue fresh observe/action/verify stages until that outcome is proved or a real dependency requires the user. Image failures preserve AX; new dialogs require fresh controls. This tool supplies no model service, completion claim or input authorization; chat is an assertion, never navigation.",
     "inputSchema": {"type": "object", "properties": {
         "app": {"type": "string", "minLength": 3, "maxLength": 256, "description": "Exact bundle ID of the application authorized by the current task."},
         "window_title": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -21,6 +21,7 @@ OBSERVE_TOOL = {
         "background": {"type": "boolean", "const": True, "description": "This observation always runs in the background; default true."},
         "include_image": {"type": "boolean", "description": "Request a target-bound safely masked MCP PNG for model visual/OCR recognition. Generic apps require an exact window_title. Default false. Feishu's chat AX route reports image unavailable; desktop_inspect supports its exact-window image route."},
         "include_raw_state": {"type": "boolean", "description": "Include the full Feishu AX tree. Default false for a recognized chat: complete composer and visible-history semantics remain, with a bounded control projection. Unknown layouts retain the full native state."},
+        "include_menus": {"type": "boolean", "description": "For generic apps, include the application's native menu commands alongside its AX window controls. Useful when a toolbar or custom UI has sparse AX. Does not activate or select a menu."},
         "max_nodes": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Feishu AX node budget, default 1000. Truncation is explicit."},
         "max_depth": {"type": "integer", "minimum": 1, "maximum": 40, "description": "Feishu AX depth budget, default 40."},
         "max_text_rows": {"type": "integer", "minimum": 1, "maximum": 100, "description": "WeChat OCR row budget, default 100."},
@@ -43,6 +44,8 @@ def validate_observation(request):
         raise ValueError("include_image must be a boolean")
     if "include_raw_state" in request and type(request["include_raw_state"]) is not bool:
         raise ValueError("include_raw_state must be a boolean")
+    if "include_menus" in request and (type(request["include_menus"]) is not bool or app in {WECHAT, FEISHU}):
+        raise ValueError("include_menus is a generic-app boolean; known chats use their existing adapters")
     for name, maximum in (("window_title", 256), ("chat", 128), ("since_observation_id", 128)):
         if name in request and (not isinstance(request[name], str) or not request[name].strip()
                                 or len(request[name]) > maximum or any(c in request[name] for c in "\r\n\t\x00")):
@@ -65,7 +68,8 @@ def _generic_observation(request, call, before):
     target = {key: request[key] for key in ("app", "window_title") if key in request}
     response = call("inspect", **target, max_depth=request.get("max_depth", 8),
                     max_nodes=request.get("max_nodes", 500),
-                    include_image=request.get("include_image", False))
+                    include_image=request.get("include_image", False),
+                    **({"include_menus": request["include_menus"]} if "include_menus" in request else {}))
     if not response["ok"]:
         return {**response, "automatic_replay_allowed": False}
     state = response.get("result")
@@ -101,6 +105,48 @@ def _generic_observation(request, call, before):
             "next_observation": {"app": request["app"], "window_title": current_window["title"]},
             "source": "current_authorized_app_window", "input_authorization": False,
             "previous_element_ids_reusable": False}
+    # This is guidance for the current model, not a goal owner or an action loop.
+    # A successful read proves only this observation; it cannot assess an
+    # arbitrary user instruction or turn pixels into input authority.
+    next_target = result.get("window_transition", {}).get("next_observation", target)
+    next_arguments = dict(next_target)
+    windows = state.get("windows", [])
+    if "window_title" not in next_arguments and len(windows) == 1:
+        title = windows[0].get("title")
+        if isinstance(title, str) and title.strip() and len(title) <= 256 and not any(c in title for c in "\r\n\t\x00"):
+            next_arguments["window_title"] = title
+    containers = {"AXApplication", "AXWindow", "AXGroup", "AXScrollArea", "AXMenuBar", "AXMenuBarItem", "AXMenu"}
+    sparse = not any(element.get("actions") and element.get("role") not in containers or element.get("role") in {
+        "AXButton", "AXTextArea", "AXTextField", "AXSearchField", "AXMenuItem",
+        "AXCheckBox", "AXPopUpButton", "AXComboBox", "AXLink", "AXRow"
+    } for element in state["elements"] if isinstance(element, dict))
+    context_gaps = []
+    if state.get("truncated") is True:
+        context_gaps.append("ax_truncated")
+        next_arguments.update(max_nodes=2000, max_depth=40)
+    if sparse:
+        context_gaps.append("sparse_ax_controls")
+        next_arguments["include_menus"] = True
+    if request.get("include_menus") is True:
+        next_arguments["include_menus"] = True
+    if result["image_requested"] and not result["image_available"]:
+        context_gaps.append("requested_image_unavailable")
+    # Request missing visual context once; do not prescribe an unchanged capture
+    # retry after a failed image. AX and its exact menu controls remain usable.
+    privacy_budget_expanded = (state.get("truncated") is True and result["image_requested"]
+        and result.get("image_unavailable_reason") == "inspection_image_privacy_truncated"
+        and (request.get("max_nodes", 500) < 2000 or request.get("max_depth", 8) < 40))
+    if "window_title" in next_arguments and (result["image_available"] or sparse and not result["image_requested"] or privacy_budget_expanded):
+        next_arguments["include_image"] = True
+    result["continuation"] = {
+        "task_completion": "not_assessed", "completion_scope": "observation_only",
+        "next_step": "inspect_new_window" if "window_transition" in result else "assess_goal_then_continue",
+        "refresh_after_action": True, "previous_element_ids_reusable_after_action": False,
+        "context_gaps": context_gaps,
+        "available_context": ["ax"] + (["masked_image"] if result["image_available"] else []),
+        "next_observation": {"tool": "desktop_observe", "arguments": next_arguments},
+        "input_authorization": False, "automatic_replay_allowed": False,
+    }
     return {"ok": True, "result": result}
 
 

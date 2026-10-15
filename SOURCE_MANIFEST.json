@@ -1,15 +1,15 @@
 {
   "schema": "source_snapshot/v1",
-  "snapshot_utc": "2026-10-15T11:05:41.853259+00:00",
+  "snapshot_utc": "2026-10-15T11:38:00.619812+00:00",
   "source_label": "Canonical public Intel Desktop project source and offline regression fixtures",
-  "source_version": "0.1.73",
+  "source_version": "0.1.74",
   "files": [
     {
       "source": ".codex-plugin/plugin.json",
       "destination": ".codex-plugin/plugin.json",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "fec1afbb9922f4571174702c1e84b0bf34d46df8f91d73312a521d5986f8152b",
-      "packaged_sha256": "fec1afbb9922f4571174702c1e84b0bf34d46df8f91d73312a521d5986f8152b",
+      "source_sha256": "c9b4c7d8e09f2b339129286e60319d5223b81f8764bf0c422dc50531a27af8c0",
+      "packaged_sha256": "c9b4c7d8e09f2b339129286e60319d5223b81f8764bf0c422dc50531a27af8c0",
       "original_snapshot_sha256": "5562cd5fc24d64fbfe36e3c554b04eed4422870bcb5c8b1fc9cc9d97f8818be4"
     },
     {
@@ -30,8 +30,8 @@
       "source": "INTERACTION_DESIGN.md",
       "destination": "INTERACTION_DESIGN.md",
       "origin": "public_project_source",
-      "source_sha256": "14e9316d485b70df21a47df547dd22618cb49375776737e2bd4687036a9408a9",
-      "packaged_sha256": "14e9316d485b70df21a47df547dd22618cb49375776737e2bd4687036a9408a9"
+      "source_sha256": "8a707f8ca8491deae4f23c00307fdf08bd4e9ee26a004e570733b9e92bf2ec2c",
+      "packaged_sha256": "8a707f8ca8491deae4f23c00307fdf08bd4e9ee26a004e570733b9e92bf2ec2c"
     },
     {
       "source": "LICENSE",
@@ -44,8 +44,8 @@
       "source": "README.md",
       "destination": "README.md",
       "origin": "public_project_source",
-      "source_sha256": "743a474190b69855b8b9ece2fa65e4d2c7d6acb5407b10e01f0cc8b99bbd1102",
-      "packaged_sha256": "743a474190b69855b8b9ece2fa65e4d2c7d6acb5407b10e01f0cc8b99bbd1102"
+      "source_sha256": "0d04e2bb354dc5c2fd521147aa94ba7d83aff9e5e5ee4d3a84c4b26ac1c42b3b",
+      "packaged_sha256": "0d04e2bb354dc5c2fd521147aa94ba7d83aff9e5e5ee4d3a84c4b26ac1c42b3b"
     },
     {
       "source": "mcp.json",
@@ -175,8 +175,8 @@
       "source": "plugin.json",
       "destination": "plugin.json",
       "origin": "public_project_source",
-      "source_sha256": "0bc1d7d8729940c86a35357a57a35f627cef0e9dd38784c84a66f341b7fee486",
-      "packaged_sha256": "0bc1d7d8729940c86a35357a57a35f627cef0e9dd38784c84a66f341b7fee486"
+      "source_sha256": "5427fc0cd7705f4e4154c20720b877d8f0e8a01ca15b203eec99e550cd957856",
+      "packaged_sha256": "5427fc0cd7705f4e4154c20720b877d8f0e8a01ca15b203eec99e550cd957856"
     },
     {
       "source": "scripts/chat_workflows.py",
@@ -197,8 +197,8 @@
       "source": "scripts/daily_analysis.py",
       "destination": "scripts/daily_analysis.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "d07dfbd95cd95b6269ac76f129d2a540a1542c8148e153ccf6fa54175a01b177",
-      "packaged_sha256": "d07dfbd95cd95b6269ac76f129d2a540a1542c8148e153ccf6fa54175a01b177"
+      "source_sha256": "49e21078a58a05ecdd5bbbd12eb00ff033d206754069e5d6a58f45afb32a95b0",
+      "packaged_sha256": "49e21078a58a05ecdd5bbbd12eb00ff033d206754069e5d6a58f45afb32a95b0"
     },
     {
       "source": "scripts/desktop_client.py",
@@ -211,8 +211,8 @@
       "source": "scripts/desktop_observation.py",
       "destination": "scripts/desktop_observation.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "76068f71acc42f859fc276a61eba39066fca24144031b9288c79048ab62b494a",
-      "packaged_sha256": "76068f71acc42f859fc276a61eba39066fca24144031b9288c79048ab62b494a"
+      "source_sha256": "abc121d35c8a8d9ac80bb50bee3dbce28d447a0c5b04ed691c56ca9fac86ed89",
+      "packaged_sha256": "abc121d35c8a8d9ac80bb50bee3dbce28d447a0c5b04ed691c56ca9fac86ed89"
     },
     {
       "source": "scripts/desktop_transactions.py",
@@ -225,8 +225,8 @@
       "source": "scripts/learning_store.py",
       "destination": "scripts/learning_store.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "3948067fe6da638f2dfbfdcf790ce5a54ba547d59b738f751520ddf27515f337",
-      "packaged_sha256": "3948067fe6da638f2dfbfdcf790ce5a54ba547d59b738f751520ddf27515f337"
+      "source_sha256": "2f2dd5d9b76115dbe450d6fef682acb69ac18e8e391c7fd2dbbe980b5f955665",
+      "packaged_sha256": "2f2dd5d9b76115dbe450d6fef682acb69ac18e8e391c7fd2dbbe980b5f955665"
     },
     {
       "source": "scripts/mcp_images.py",
@@ -275,8 +275,8 @@
       "source": "scripts/server.py",
       "destination": "scripts/server.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "3c2acec354b6fb0244c1bfb73c45646c13277c0879eafbbed6375c6743fd2476",
-      "packaged_sha256": "3c2acec354b6fb0244c1bfb73c45646c13277c0879eafbbed6375c6743fd2476",
+      "source_sha256": "693c9f77735fbb7e1ff501917e4594885aabf52892df05e98fc0f78ce0dc242f",
+      "packaged_sha256": "693c9f77735fbb7e1ff501917e4594885aabf52892df05e98fc0f78ce0dc242f",
       "original_snapshot_sha256": "b458fdae0e2a32b139f59c047898eb7319c9d4b7e6c76a3f0f1cfdd505b6141b"
     },
     {
@@ -299,9 +299,16 @@
       "source": "skills/intel-desktop/SKILL.md",
       "destination": "skills/intel-desktop/SKILL.md",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "aae60675225bac01d7aeffd74cf38e54b188095f7f0f02a8b7a19eda0e1b0de2",
-      "packaged_sha256": "aae60675225bac01d7aeffd74cf38e54b188095f7f0f02a8b7a19eda0e1b0de2",
+      "source_sha256": "61b4a0cc95241c6367bac5870e75344ce263ba2e66dec3f6796a0b8aad89107f",
+      "packaged_sha256": "61b4a0cc95241c6367bac5870e75344ce263ba2e66dec3f6796a0b8aad89107f",
       "original_snapshot_sha256": "facd66bd6a60cd3e7a4a820ce78dcb2f22202946d99072c9fbc17bbbfae6b3a8"
+    },
+    {
+      "source": "skills/intel-desktop/references/generic-apps.md",
+      "destination": "skills/intel-desktop/references/generic-apps.md",
+      "origin": "public_project_source",
+      "source_sha256": "48d43daeeb1b475d0db4faf442597ef973b668e0e5c1ad92ecde8f9d0f2f3635",
+      "packaged_sha256": "48d43daeeb1b475d0db4faf442597ef973b668e0e5c1ad92ecde8f9d0f2f3635"
     },
     {
       "source": "tests/ax_children_completeness_main.swift",
@@ -513,8 +520,8 @@
       "source": "tests/test_generic_observation.py",
       "destination": "tests/test_generic_observation.py",
       "origin": "parent_authored_offline_regression_fixture",
-      "source_sha256": "99693acd3d4958133eeebe63fd8c39658752a2483c3c0820325c74ac7f79e914",
-      "packaged_sha256": "99693acd3d4958133eeebe63fd8c39658752a2483c3c0820325c74ac7f79e914"
+      "source_sha256": "9ea52d0394f8aa4484b01177291b362a9335ee6fd870c06f351d5d4a724e5941",
+      "packaged_sha256": "9ea52d0394f8aa4484b01177291b362a9335ee6fd870c06f351d5d4a724e5941"
     },
     {
       "source": "tests/test_interruption_metadata.py",
@@ -528,8 +535,8 @@
       "source": "tests/test_learning_daily.py",
       "destination": "tests/test_learning_daily.py",
       "origin": "offline_regression_fixture",
-      "source_sha256": "2606b0a22fd64d83388a0724c6eb523cbc175cf2069c0e324f4e119bf7cff45b",
-      "packaged_sha256": "2606b0a22fd64d83388a0724c6eb523cbc175cf2069c0e324f4e119bf7cff45b",
+      "source_sha256": "e125b3c55491328b6d4ac36c78abc82bc1ecfd2f1bb69d3969881afee32f0fb1",
+      "packaged_sha256": "e125b3c55491328b6d4ac36c78abc82bc1ecfd2f1bb69d3969881afee32f0fb1",
       "original_snapshot_sha256": "ed6bf1d6c2af192d9c9193b93b288e129fa6f3a18dc8190f04aa56f99dfcc036"
     },
     {
@@ -861,6 +868,7 @@
     "scripts/task_runtime.py",
     "scripts/workflow_tools.py",
     "skills/intel-desktop/SKILL.md",
+    "skills/intel-desktop/references/generic-apps.md",
     "tests/ax_children_completeness_main.swift",
     "tests/ax_children_fakes.swift",
     "tests/capture_error_routing_main.swift",

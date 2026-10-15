@@ -38,6 +38,12 @@ class GenericObservationTests(unittest.TestCase):
         self.assertEqual(value['events_posted'], 0)
         self.assertNotIn('frontmost_window_title', value['focus_context_before'])
         self.assertEqual([r['command'] for r in self.calls], ['status', 'inspect', 'status'])
+        guidance = value['continuation']
+        self.assertEqual(guidance['task_completion'], 'not_assessed')
+        self.assertEqual(guidance['completion_scope'], 'observation_only')
+        self.assertEqual(guidance['available_context'], ['ax'])
+        self.assertNotIn('include_image', guidance['next_observation']['arguments'])
+        self.assertFalse(guidance['input_authorization'])
 
     def test_next_read_returns_new_dialog_controls_without_replay(self):
         state = {'app': 'com.apple.TextEdit', 'target_pid': 42,
@@ -84,10 +90,71 @@ class GenericObservationTests(unittest.TestCase):
         self.assertFalse(transition['previous_element_ids_reusable'])
         self.assertFalse(transition['input_authorization'])
         self.assertEqual([r['command'] for r in self.calls],['status','inspect','status'])
+        guidance = result['result']['continuation']
+        self.assertEqual(guidance['next_step'], 'inspect_new_window')
+        self.assertEqual(guidance['next_observation']['arguments']['window_title'], 'Open')
+        self.assertFalse(guidance['previous_element_ids_reusable_after_action'])
         for key, value in [('app_frontmost',False),('authorized_owner_pid',99),('title_complete',False)]:
             changed=copy.deepcopy(state);changed['current_window'][key]=value
             result=execute_observation({'app':'com.apple.TextEdit','window_title':'Owned document'},self.backend(changed))
             self.assertNotIn('window_transition',result['result'])
+            self.assertEqual(result['result']['continuation']['next_observation']['arguments']['window_title'], 'Owned document')
+
+    def test_sparse_ax_suggests_current_window_pixels_and_real_menus_without_input(self):
+        state = {'app': 'org.example.canvas', 'target_pid': 42,
+                 'windows': [{'title': 'Canvas'}], 'elements': [
+                     {'role': 'AXWindow', 'actions': ['AXRaise']},
+                     {'role': 'AXScrollArea', 'actions': ['AXScrollDownByPage']}],
+                 'truncated': False, 'image_available': False}
+        response = execute_observation({'app': 'org.example.canvas'}, self.backend(state))
+        guidance = response['result']['continuation']
+        self.assertEqual(guidance['next_observation'], {'tool': 'desktop_observe', 'arguments': {
+            'app': 'org.example.canvas', 'window_title': 'Canvas', 'include_menus': True, 'include_image': True}})
+        self.assertIn('sparse_ax_controls', guidance['context_gaps'])
+        self.assertEqual([r['command'] for r in self.calls], ['status', 'inspect', 'status'])
+
+    def test_partial_ax_requests_larger_bounded_context_without_claiming_absence(self):
+        state = {'app': 'com.apple.TextEdit', 'target_pid': 42,
+                 'windows': [{'title': 'Owned document'}], 'elements': [{'role': 'AXTextArea'}],
+                 'truncated': True}
+        response = execute_observation({'app': 'com.apple.TextEdit', 'window_title': 'Owned document'}, self.backend(state))
+        guidance = response['result']['continuation']
+        self.assertIn('ax_truncated', guidance['context_gaps'])
+        self.assertEqual(guidance['next_observation']['arguments']['max_nodes'], 2000)
+        self.assertEqual(guidance['next_observation']['arguments']['max_depth'], 40)
+        self.assertEqual(guidance['task_completion'], 'not_assessed')
+
+    def test_generic_menu_option_is_forwarded_but_not_silently_ignored_by_chat_adapters(self):
+        response = execute_observation({'app': 'com.apple.TextEdit', 'window_title': 'Owned document',
+                                        'include_menus': True}, self.backend())
+        self.assertTrue(response['ok'])
+        self.assertTrue(next(r for r in self.calls if r['command'] == 'inspect')['include_menus'])
+        for app, option in [('com.tencent.xinWeChat', True), ('com.bytedance.macos.feishu', False),
+                            ('com.apple.TextEdit', 1)]:
+            response = execute_observation({'app': app, 'include_menus': option}, self.backend())
+            self.assertFalse(response['ok'])
+            self.assertEqual(self.calls, [])
+
+    def test_truncated_privacy_can_request_pixels_with_expanded_ax_but_not_repeat_maximum(self):
+        state = {'app': 'com.apple.TextEdit', 'target_pid': 42,
+                 'windows': [{'title': 'Owned document'}], 'elements': [{'role': 'AXTextArea'}],
+                 'truncated': True, 'image_available': False,
+                 'image_unavailable_reason': 'inspection_image_privacy_truncated'}
+        request = {'app': 'com.apple.TextEdit', 'window_title': 'Owned document', 'include_image': True}
+        response = execute_observation(request, self.backend(state))
+        next_args = response['result']['continuation']['next_observation']['arguments']
+        self.assertTrue(next_args['include_image'])
+        self.assertEqual((next_args['max_nodes'], next_args['max_depth']), (2000, 40))
+        response = execute_observation({**request, 'max_nodes': 2000, 'max_depth': 40}, self.backend(state))
+        self.assertNotIn('include_image', response['result']['continuation']['next_observation']['arguments'])
+
+    def test_ambiguous_windows_do_not_produce_an_unbound_image_request(self):
+        state = {'app': 'org.example.canvas', 'target_pid': 42,
+                 'windows': [{'title': 'One'}, {'title': 'Two'}], 'elements': []}
+        response = execute_observation({'app': 'org.example.canvas'}, self.backend(state))
+        arguments = response['result']['continuation']['next_observation']['arguments']
+        self.assertNotIn('window_title', arguments)
+        self.assertNotIn('include_image', arguments)
 
 
 if __name__ == '__main__':

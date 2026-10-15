@@ -35,6 +35,33 @@ completion platform is introduced. Generic applications retain current-model
 AX/image-driven steps and current-digest parameterized plans. Their validated
 dialog and selection behavior is preserved.
 
+## Generic application completion
+
+The current model keeps the user goal across bounded observe/action/verify stages.
+A tool response assesses its own operation, not the entire instruction. Generic
+observation supplies `continuation` with current context gaps and a read-only next
+observation suggestion. Partial AX can be expanded; a missing image keeps usable
+AX. When the privacy budget was actually expanded, another image request may use
+the larger complete scope. No unchanged failed image is prescribed as a loop.
+Native menus and safely masked pixels/visual OCR complement AX as needed.
+Fresh owner-published dialogs require new controls and stages. The model proceeds
+to the real requested outcome or the exact dependency it cannot resolve safely;
+there is no additional goal owner, model service or background executor.
+
+Temporary application-control sources remain metadata candidates. The existing
+learning owner derives conversion/repair/verification/reuse entries and daily
+text detail from current-source runtime proof. Raw code never becomes executable
+by registration. Proven mechanical stages can be parameterized while dynamic
+layout reasoning stays with the model. See the [execution guide](skills/intel-desktop/references/generic-apps.md).
+
+The installed 0.1.74 generic acceptance expanded partial TextEdit AX to complete
+AX plus a real masked target image, then ran a five-step selection/readback/restore
+plan with fifteen real postconditions. The original value/selection and foreign
+system focus were preserved. Its 2.111 s script duration and 332.486 s measured
+model-driven acceptance episode are separate runtime entries. Neither is a
+universal generic-app latency claim. Native source and the accepted 0.1.73 helper
+are unchanged in this Python/Skill/report release.
+
 ## Failed foreground acquisition
 
 An accepted app activation can land on that app's previously focused window while

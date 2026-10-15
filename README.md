@@ -6,6 +6,12 @@ Native macOS desktop tools for Intel Macs, exposed through local stdio MCP. 面�
 
 普通应用由当前模型读取有界 AX 树、菜单和可选目标窗口图像，选择实际控件并验证结果。图像通过 ScreenCaptureKit 获取，普通应用由当前模型结合 AX 与图像识别局部文字；微信视觉适配使用本机 Vision OCR。工具本身不调用模型服务。WeChat/微信和 Feishu/飞书另有针对已识别布局的聊天流程，支持观察、定位、草稿、精确清理和明确授权的一次发送。AX 不可访问、窗口歧义、完整值缺失和未知结果会停止当前动作，不能据此宣传任意应用都已通过验收。
 
+**0.1.74 的通用应用路线允许较慢，但要持续推进到真实指令完成。** 当前模型按“观察 → 分析 → 小步操作 → 回读 → 判断剩余工作”循环，必要时混合 AX、目标窗口截图/视觉 OCR 与真实菜单；一次点击、工具返回或新对话框只结束一个阶段。`desktop_observe` 给出观察范围和下一次只读上下文建议，不替模型宣布用户任务完成。图像失败保留 AX；有界 AX 被截断时扩大读取后再判断。`include_menus:true` 为通用应用提供真实菜单。完整用法见 [通用应用执行指引](skills/intel-desktop/references/generic-apps.md)。
+
+脚本分析现在列出 **转换、修复、继续验收、复用** 四类明细，包含当前源码摘要下的真实证明、失败和遗漏数量；日报文本直接显示可处理项。原始代码仍只收集为候选，参数化路线经真实后条件验证后优先用于下一次兼容任务，布局变化时继续由模型分析。周期维护消费这些明细后决定固化对象，分析器不自动运行未知脚本。
+
+本次通用路线实机范围为 TextEdit 自有测试文档：首次 AX 截断使截图不可用，扩大上下文后取得完整 AX 和真实目标窗口图像，再完成五步选择/回读/恢复计划，15 个后条件全部通过，完整原文及原选区恢复，系统焦点保持不变。该脚本调用耗时 **2.11 s**；含模型分析、上下文扩展及登记的本次验收跨度另行登记，不能把 2.11 s 称作整个模型任务耗时。参数化来源已按当前摘要登记和实机验证；单次成功不冒充跨任务成熟证明。
+
 多个动作可通过 `desktop_batch`、`desktop_transaction` 或高层 chat 在同一个 FIFO 内完成，避免不同调用相互穿插。窗口、PID、几何、收件人和完整值证明在动作边界重新核对；选区使用精确文字或 UTF-16 range。前台操作尊重用户接管并按现有证明归还原焦点；显式后台路径有各自的焦点隔离条件。发送需要当前用户对精确收件人和内容的授权，posted events 不等于发送成功。
 
 切换前台应用前，非激活接管提示保持原焦点 **1–2 秒**，等待键盘停手；持续输入时保留原焦点，操作期间提示持续显示；归还后切换为后台确认提示，直到本次捕获与操作范围实际释放才关闭。新打开的 dialog 必须重新 inspect，使用当前真实 AX 身份、parent/sheet/window 关联证明它属于已授权窗口；不能仅凭相同 PID 接受另一个窗口，已证明关联的 dialog 控件也可能由 remote PID 承载。本轮已在 TextEdit 实机完成“原文档 → 原生打开窗口 → 新窗口回读 → 取消 → 原文档回读 → 归还原焦点”，总耗时 4.63 秒；切换前提示等待 1.02 秒。此证据不覆盖其他应用或远程 PID 对话框。
@@ -14,7 +20,7 @@ Native macOS desktop tools for Intel Macs, exposed through local stdio MCP. 面�
 
 ### 构建与配置
 
-需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。Git 仓库不包含编译产物或额外 Python 依赖；版本发布的 Intel 压缩包另附已编译 helper。预编译包见 [GitHub Releases](https://github.com/zhangqiang5204/intel-desktop/releases/tag/v0.1.73)。在仓库根目录：
+需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。Git 仓库不包含编译产物或额外 Python 依赖；版本发布的 Intel 压缩包另附已编译 helper。预编译包见 [GitHub Releases](https://github.com/zhangqiang5204/intel-desktop/releases/tag/v0.1.74)。0.1.74 为 Python、工具引导、Skill 与分析报告更新，发布包沿用已验收的 0.1.73 原生 helper；状态中的 `plugin_version` 与 helper 的 `version` 分别标识两者。在仓库根目录：
 
 ```bash
 bash native/build.sh
@@ -83,6 +89,8 @@ Python 测试使用 fake native 和临时 SQLite，不打开应用、不发送�
 ## English
 
 Intel Desktop runs a persistent Swift helper behind a standard-library Python MCP server. For ordinary apps, the current model uses bounded Accessibility trees, menu paths and optional window images to choose meaningful actions, then verifies the actual result. Target-window capture uses ScreenCaptureKit. The current model combines AX with image text for ordinary apps; the WeChat visual adapter uses local Vision OCR. The helper makes no model-service calls. Recognized WeChat and Feishu layouts also have dedicated chat workflows; generic app support does not imply every layout has been tested.
+
+Version **0.1.74** makes the generic route explicit: the current model continues observe/analyze/act/verify stages to the requested outcome. A tool call, sparse AX, missing chat adapter or new dialog is a stage boundary. Generic observations preserve AX when an image is unavailable, suggest fresh context and support native menus. Script analysis and daily text reports expose conversion/repair/verification/reuse entries backed by the current registered digest; they never execute unknown collected code. An installed TextEdit test recovered from partial AX to complete AX plus masked pixels, then completed a five-step parameterized selection/readback/restoration plan with fifteen checks in 2.11 seconds. Its longer model-driven acceptance span is recorded separately. This Python/Skill/report update retains the accepted native 0.1.73 helper, reported separately from `plugin_version`.
 
 One queued batch, transaction or high-level workflow holds the FIFO across its steps. Current PID/window/geometry/value evidence, exact semantic selectors and takeover checks govern each action. Model-created scripts are collected as candidates; only a current-digest parameterized plan with real per-step and final postconditions can run. Registration, posted events and stale success flags never authorize replay. A Send needs current-human authorization for the exact recipient/content and fresh same-chat message-plus-empty-composer proof.
 

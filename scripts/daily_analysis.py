@@ -409,10 +409,19 @@ def human_report(report):
         lines.append(f"Exception {group['error_code']} / {group['tool']} / {group['app']}: {group['count']}")
     for group in report["by_interruption_reason"][:5]:
         lines.append(f"Interruption {group['error_code'] or 'no_terminal_error'} / {group['interruption_reason']} / {group['tool']} / {group['app']}: {group['count']}")
-    levels = report["script_learning"]["levels"]
+    learning = report["script_learning"]
+    levels = learning["levels"]
     for stage in report["native_stage_ms"]["stages"][:5]:
         lines.append(f"Native stage {stage['stage']} p50/p95: {stage['p50']}/{stage['p95']} ms ({stage['samples']} samples)")
-    lines.append(f"Registered scripts: {report['script_learning']['registered_count']}; candidate/verified/reusable: {levels['candidate']}/{levels['verified']}/{levels['reusable']}")
+    lines.append(f"Registered scripts: {learning['registered_count']}; candidate/verified/reusable: {levels['candidate']}/{levels['verified']}/{levels['reusable']}")
+    actions = learning["next_action_counts"]
+    lines.append(f"Script next actions (current registered digests, independent of report day): conversion={actions['conversion']}; repair={actions['repair']}; verification={actions['verification']}; reuse={actions['reuse']}")
+    for item in learning["candidates"][:10] + learning["reusable_scripts"][:5]:
+        lines.append(f"Script {item['next_action']} {item['id']} / {item['app']} / {item['purpose']}: {item['recommendation']}; status={item['status']}; verified runs/tasks={item['verified_successes']}/{item['verified_task_count']}; last error={item['last_error_code'] or 'none'}")
+    omitted = (learning["omitted_candidates"] + max(0, len(learning["candidates"]) - 10)
+               + learning["omitted_reusable_scripts"] + max(0, len(learning["reusable_scripts"]) - 5))
+    if omitted:
+        lines.append(f"Script refinements omitted from text: {omitted}; bounded JSON details and desktop_script(action:list) identify the remaining registered sources.")
     for candidate in report["repair_candidates"][:5]:
         lines.append(f"Priority {candidate['priority']}: {candidate['suggested_action']}")
     lines.append("Reports are evidence for model decisions. This analyzer performs no source repair, script execution or input replay.")
