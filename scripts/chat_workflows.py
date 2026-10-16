@@ -61,6 +61,12 @@ class Stopped(Exception):
         self.code, self.details = code, details or {}
 
 
+class _IncompleteFeishuSendAX(Stopped):
+    """Only locally checked AX incompleteness, never a native retry request."""
+    def __init__(self, message, reason):
+        super().__init__("send_state_unknown", message, {"confirmation_incomplete_reason": reason})
+
+
 def _feishu_search_open_control_allowed(row):
     """Match the native owned-search predicate, including the observed fullwidth plus."""
     role = row.get("role")
@@ -519,6 +525,8 @@ class ChatSession:
         self.feishu_send_proof_reused = False
         self.feishu_send_points = {"invocation_started": time.perf_counter()} if self.app == FEISHU else {}
         self.feishu_confirmation_reads = 0
+        self.feishu_confirmation_incomplete_reasons = Counter()
+        self.feishu_confirmation_reobservations = 0
         self.feishu_confirmation_baseline = None
         self.feishu_confirmation_observations = []
         self.feishu_submit_focus_receipt = None
@@ -1923,6 +1931,11 @@ class ChatSession:
         composer = self.feishu_composer(tree)
         if (tree.get("truncated") is not False or composer.get("value_complete") is not True
                 or composer.get("value_truncated") is not False or self.feishu_chat_area(tree) is None):
+            # Classify only positive incompleteness after the same strict
+            # identity, ancestry, recipient and geometry guards used by proof.
+            # This also keeps the later reply path fail-closed; only send_once
+            # can re-observe this private refusal before its original deadline.
+            self.feishu_full_ax_body_proof(tree, self.request["text"])
             raise Stopped("send_state_unknown", "Complete current AX chat and composer are unavailable after submission; no replay")
         self.feishu_header(tree, self.title)
         return tree
@@ -1949,9 +1962,21 @@ class ChatSession:
         a message count. Require the actual chat ancestry and a body-contained
         container; a sidebar preview or a complete composer value cannot count.
         """
-        if (tree.get("truncated") is not False or type(tree.get("target_pid")) is not int
+        if (type(tree.get("truncated")) is not bool or type(tree.get("target_pid")) is not int
                 or tree["target_pid"] != self.pid):
             raise Stopped("send_state_unknown", "Complete same-PID AX is required for the send baseline and outcome")
+        incomplete = (("ax_tree_truncated", "Complete same-PID AX is required for the send baseline and outcome")
+                      if tree["truncated"] else None)
+
+        def require_complete_value(row, reason, message):
+            nonlocal incomplete
+            if row.get("value_complete") is True and row.get("value_truncated") is False:
+                return
+            if type(row.get("value_complete")) is bool and type(row.get("value_truncated")) is bool:
+                incomplete = incomplete or (reason, message)
+                return
+            raise Stopped("send_state_unknown", message)
+
         window = _unique([w for w in tree.get("windows", []) if w.get("title") == self.target["window_title"]],
                          "The same send window is unavailable")
         if _rect(window) != self.frame:
@@ -1984,16 +2009,15 @@ class ChatSession:
 
         composer_chain = chain(composer)
         if (area not in composer_chain or composer.get("element_pid") != self.pid
-                or composer.get("value_complete") is not True or composer.get("value_truncated") is not False
                 or not contains(area_rect, _rect(composer))):
             raise Stopped("send_state_unknown", "The complete composer is not bound to the actual messenger-chat")
+        require_complete_value(composer, "ax_composer_value_incomplete", "The complete composer is not bound to the actual messenger-chat")
         header_band = {**area_rect, "width": area_rect["width"] * .67, "height": min(56, area_rect["height"])}
         headers = [row for row in rows if row.get("role") == "AXStaticText" and row.get("element_pid") == self.pid
                    and _norm(_text(row)) == _norm(self.title) and _inside(row, header_band)
                    and _rect(row)["height"] > 2 and _rect(row)["width"] > 2 and area in chain(row)]
         header = _unique(headers, "The actual same-chat AX header is unavailable for send proof")
-        if header.get("value_complete") is not True or header.get("value_truncated") is not False:
-            raise Stopped("send_state_unknown", "The actual chat header lacks complete AX value proof")
+        require_complete_value(header, "ax_header_value_incomplete", "The actual chat header lacks complete AX value proof")
         if not _label_matches(self.feishu_header(tree, self.title), self.title):
             raise Stopped("recipient_mismatch", "The complete composer and header no longer name the same chat")
         found, clipped = set(), 0
@@ -2008,12 +2032,11 @@ class ChatSession:
                 continue
             # A same-chat exact-but-incomplete value cannot establish an absent
             # baseline either. Refuse before input as well as after posting.
-            if row.get("value_complete") is not True or row.get("value_truncated") is not False:
-                raise Stopped("send_state_unknown", "An exact AX body candidate lacks complete value proof")
             try:
                 frame = _rect(row)
             except Stopped as error:
                 raise Stopped("send_state_unknown", "An exact AX body candidate lacks positive geometry") from error
+            require_complete_value(row, "ax_body_value_incomplete", "An exact AX body candidate lacks complete value proof")
             if not contains(body, frame):
                 continue
             containers = [parent for parent in parents if parent is not area
@@ -2026,6 +2049,8 @@ class ChatSession:
             if key not in found:
                 found.add(key)
                 clipped += int(frame["height"] <= 2 or frame["width"] <= 2)
+        if incomplete is not None:
+            raise _IncompleteFeishuSendAX(incomplete[1], incomplete[0])
         return {"source": "full_AX_body_proof", "exact_text_node_occurrences": len(found),
                 "clipped_exact_text_node_occurrences": clipped, "same_chat_ancestry_verified": True,
                 "count_unit": "distinct_AX_text_geometries", "may_include_viewport_clipped_nodes": True,
@@ -2557,6 +2582,9 @@ class ChatSession:
                   "draft_verification_reused": self.feishu_send_proof_reused,
                   "confirmation_verified": self.send_verified,
                   "confirmation_read_count": self.feishu_confirmation_reads,
+                  "confirmation_incomplete_read_count": sum(self.feishu_confirmation_incomplete_reasons.values()),
+                  "confirmation_reobservation_count": self.feishu_confirmation_reobservations,
+                  "confirmation_incomplete_reasons": dict(self.feishu_confirmation_incomplete_reasons),
                   "focus_return_requested_after_submit": self.feishu_submit_focus_receipt is not None and self.focus_restore_requested,
                   "focus_return_verified_after_submit": self.feishu_submit_focus_receipt is not None and self.feishu_submit_focus_receipt.get("focus_restored") is True,
                   "confirmation_evidence": {"before_exact_body_occurrences": self.feishu_confirmation_baseline,
@@ -2670,11 +2698,30 @@ class ChatSession:
         while True:
             if self.app == FEISHU:
                 self.feishu_confirmation_reads += 1
-            value = self.refresh()
-            draft = self.draft_value(value)
-            rows = self.visible_rows(value)
-            visible = "\n".join(row["text"] for row in rows)
-            full_ax_proof = self.feishu_full_ax_body_proof(value, text) if self.app == FEISHU else None
+            try:
+                value = self.refresh()
+                full_ax_proof = self.feishu_full_ax_body_proof(value, text) if self.app == FEISHU else None
+                draft = self.draft_value(value)
+                rows = self.visible_rows(value)
+                visible = "\n".join(row["text"] for row in rows)
+            except _IncompleteFeishuSendAX as failure:
+                if self.app != FEISHU or not self.submit_posted or self.feishu_submit_focus_receipt is None:
+                    raise
+                reason = failure.details["confirmation_incomplete_reason"]
+                self.feishu_confirmation_incomplete_reasons[reason] += 1
+                self.feishu_send_mark("confirmation_ax_incomplete", "postcondition")
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(.12, remaining))
+                    if time.monotonic() < deadline:
+                        self.feishu_confirmation_reobservations += 1
+                        self.feishu_send_mark("confirmation_ax_reobserve", "postcondition")
+                        continue
+                self.feishu_send_mark("confirmation_finished", "postcondition")
+                failure.details.update(confirmation_budget_exhausted=True,
+                    confirmation_incomplete_read_count=sum(self.feishu_confirmation_incomplete_reasons.values()),
+                    confirmation_reobservation_count=self.feishu_confirmation_reobservations)
+                raise
             occurrences = (full_ax_proof["exact_text_node_occurrences"] if full_ax_proof is not None
                            else sum(_norm(row["text"]) == _norm(text) for row in rows))
             if self.app == FEISHU and len(self.feishu_confirmation_observations) < 8:

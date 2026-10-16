@@ -4,6 +4,8 @@ Native macOS desktop tools for Intel Macs, exposed through local stdio MCP. 面�
 
 ## 中文
 
+**0.1.75 修复飞书提交后确认过早结束的问题。** 对已提交且已归还焦点的发送，如果同一目标的首次 AX 树或完整值暂时不齐，在原有 5 秒确认期限内继续只读核验；不重新输入、提交或抢回焦点。完整正文增加和空草稿仍是成功条件，身份、窗口、收件人或安全检查失败仍立即停止。正常首次确认成功不增加等待。本次未发送新测试消息；后台 AX 读取和离线重查测试分别记录，先前实机 Send 证明仍按原版本列出。
+
 普通应用由当前模型读取有界 AX 树、菜单和可选目标窗口图像，选择实际控件并验证结果。图像通过 ScreenCaptureKit 获取，普通应用由当前模型结合 AX 与图像识别局部文字；微信视觉适配使用本机 Vision OCR。工具本身不调用模型服务。WeChat/微信和 Feishu/飞书另有针对已识别布局的聊天流程，支持观察、定位、草稿、精确清理和明确授权的一次发送。AX 不可访问、窗口歧义、完整值缺失和未知结果会停止当前动作，不能据此宣传任意应用都已通过验收。
 
 **0.1.74 的通用应用路线允许较慢，但要持续推进到真实指令完成。** 当前模型按“观察 → 分析 → 小步操作 → 回读 → 判断剩余工作”循环，必要时混合 AX、目标窗口截图/视觉 OCR 与真实菜单；一次点击、工具返回或新对话框只结束一个阶段。`desktop_observe` 给出观察范围和下一次只读上下文建议，不替模型宣布用户任务完成。图像失败保留 AX；有界 AX 被截断时扩大读取后再判断。`include_menus:true` 为通用应用提供真实菜单。完整用法见 [通用应用执行指引](skills/intel-desktop/references/generic-apps.md)。
@@ -20,7 +22,7 @@ Native macOS desktop tools for Intel Macs, exposed through local stdio MCP. 面�
 
 ### 构建与配置
 
-需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。Git 仓库不包含编译产物或额外 Python 依赖；版本发布的 Intel 压缩包另附已编译 helper。预编译包见 [GitHub Releases](https://github.com/zhangqiang5204/intel-desktop/releases/tag/v0.1.74)。0.1.74 为 Python、工具引导、Skill 与分析报告更新，发布包沿用已验收的 0.1.73 原生 helper；状态中的 `plugin_version` 与 helper 的 `version` 分别标识两者。在仓库根目录：
+需要 Python 3.9+、可用 `xcrun swiftc` 的 Xcode Command Line Tools 和支持这些系统框架的 macOS SDK。Git 仓库不包含编译产物或额外 Python 依赖；版本发布的 Intel 压缩包另附已编译 helper。预编译包见 [GitHub Releases](https://github.com/zhangqiang5204/intel-desktop/releases/tag/v0.1.75)。0.1.75 为 Python 发送确认修复，发布包沿用已验收的 0.1.73 原生 helper；状态中的 `plugin_version` 与 helper 的 `version` 分别标识两者。在仓库根目录：
 
 ```bash
 bash native/build.sh
@@ -87,6 +89,8 @@ Python 测试使用 fake native 和临时 SQLite，不打开应用、不发送�
 已有会话不会自动重新加载本地 Python 代码；当前 `desktop_status` 返回 `plugin_runtime_features`。旧连接缺少该元数据时，当前任务可以使用随包 `desktop_client.py` 打开新标准 MCP 连接，不能重放旧操作。微信系统录屏指示仍须独立核实；本 helper 的活跃流为零不能证明同一启动器下所有捕获都已结束。
 
 ## English
+
+Version **0.1.75** keeps observing temporary incomplete AX reads after a Feishu submission within the original five-second confirmation deadline, after focus has already been returned. It never resubmits or reacquires focus. Complete same-chat body and empty-composer proof remain required; target identity and safety failures still stop immediately. The normal first-read success path adds no delay. This repair has offline retry tests and read-only app observation; no new live Send was performed. Historical live Send results remain attributed to their tested versions.
 
 Intel Desktop runs a persistent Swift helper behind a standard-library Python MCP server. For ordinary apps, the current model uses bounded Accessibility trees, menu paths and optional window images to choose meaningful actions, then verifies the actual result. Target-window capture uses ScreenCaptureKit. The current model combines AX with image text for ordinary apps; the WeChat visual adapter uses local Vision OCR. The helper makes no model-service calls. Recognized WeChat and Feishu layouts also have dedicated chat workflows; generic app support does not imply every layout has been tested.
 

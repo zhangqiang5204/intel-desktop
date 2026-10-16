@@ -1,15 +1,15 @@
 {
   "schema": "source_snapshot/v1",
-  "snapshot_utc": "2026-10-15T11:38:00.619812+00:00",
+  "snapshot_utc": "2026-10-16T18:09:21.103643+00:00",
   "source_label": "Canonical public Intel Desktop project source and offline regression fixtures",
-  "source_version": "0.1.74",
+  "source_version": "0.1.75",
   "files": [
     {
       "source": ".codex-plugin/plugin.json",
       "destination": ".codex-plugin/plugin.json",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "c9b4c7d8e09f2b339129286e60319d5223b81f8764bf0c422dc50531a27af8c0",
-      "packaged_sha256": "c9b4c7d8e09f2b339129286e60319d5223b81f8764bf0c422dc50531a27af8c0",
+      "source_sha256": "63ac7c0c43b03721781ae9f64e4bdee30791708cdda8202548b2f64e4b01cfb1",
+      "packaged_sha256": "63ac7c0c43b03721781ae9f64e4bdee30791708cdda8202548b2f64e4b01cfb1",
       "original_snapshot_sha256": "5562cd5fc24d64fbfe36e3c554b04eed4422870bcb5c8b1fc9cc9d97f8818be4"
     },
     {
@@ -44,8 +44,8 @@
       "source": "README.md",
       "destination": "README.md",
       "origin": "public_project_source",
-      "source_sha256": "0d04e2bb354dc5c2fd521147aa94ba7d83aff9e5e5ee4d3a84c4b26ac1c42b3b",
-      "packaged_sha256": "0d04e2bb354dc5c2fd521147aa94ba7d83aff9e5e5ee4d3a84c4b26ac1c42b3b"
+      "source_sha256": "0c090169338268fc984e13f5a7ba6b9138a91d61adcafb9b8a159bb996be5542",
+      "packaged_sha256": "0c090169338268fc984e13f5a7ba6b9138a91d61adcafb9b8a159bb996be5542"
     },
     {
       "source": "mcp.json",
@@ -175,15 +175,15 @@
       "source": "plugin.json",
       "destination": "plugin.json",
       "origin": "public_project_source",
-      "source_sha256": "5427fc0cd7705f4e4154c20720b877d8f0e8a01ca15b203eec99e550cd957856",
-      "packaged_sha256": "5427fc0cd7705f4e4154c20720b877d8f0e8a01ca15b203eec99e550cd957856"
+      "source_sha256": "98f4e9fa0a1ac15f6b9fd0ad8ceecbae92ecce53bfecd4d7305147126cbfab90",
+      "packaged_sha256": "98f4e9fa0a1ac15f6b9fd0ad8ceecbae92ecce53bfecd4d7305147126cbfab90"
     },
     {
       "source": "scripts/chat_workflows.py",
       "destination": "scripts/chat_workflows.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "41673f9765bf222d4f2dbc88656b8131c6753cd95d1eeadd76eb4b0bd912598c",
-      "packaged_sha256": "41673f9765bf222d4f2dbc88656b8131c6753cd95d1eeadd76eb4b0bd912598c",
+      "source_sha256": "ae93246829398b4f376b09fae98bdaeb85a7814e57858310dc3237323a0c4b9d",
+      "packaged_sha256": "ae93246829398b4f376b09fae98bdaeb85a7814e57858310dc3237323a0c4b9d",
       "original_snapshot_sha256": "1a86a3ae86a6ff2eb90ad4668f8a99533efa4041d2e58337687a3f4b06f1aec8"
     },
     {
@@ -275,8 +275,8 @@
       "source": "scripts/server.py",
       "destination": "scripts/server.py",
       "origin": "plugin_source_snapshot",
-      "source_sha256": "693c9f77735fbb7e1ff501917e4594885aabf52892df05e98fc0f78ce0dc242f",
-      "packaged_sha256": "693c9f77735fbb7e1ff501917e4594885aabf52892df05e98fc0f78ce0dc242f",
+      "source_sha256": "6df31835b533c7721ee1d62b6e3320625d4370280d576c648f26350eb8f003ca",
+      "packaged_sha256": "6df31835b533c7721ee1d62b6e3320625d4370280d576c648f26350eb8f003ca",
       "original_snapshot_sha256": "b458fdae0e2a32b139f59c047898eb7319c9d4b7e6c76a3f0f1cfdd505b6141b"
     },
     {
@@ -447,6 +447,13 @@
       "origin": "public_project_source",
       "source_sha256": "b3082e155207742ca0ace6550045e2acc2c0410077bcfa5a6d856e97c518ae6c",
       "packaged_sha256": "b3082e155207742ca0ace6550045e2acc2c0410077bcfa5a6d856e97c518ae6c"
+    },
+    {
+      "source": "tests/test_feishu_confirmation_reobserve.py",
+      "destination": "tests/test_feishu_confirmation_reobserve.py",
+      "origin": "public_project_source",
+      "source_sha256": "6310d27dd83e57b3c8c0aefa76508ff34b6ec3b3a8cdd608a8d19d2bb8aefd30",
+      "packaged_sha256": "6310d27dd83e57b3c8c0aefa76508ff34b6ec3b3a8cdd608a8d19d2bb8aefd30"
     },
     {
       "source": "tests/test_feishu_focus_restore.py",
@@ -888,6 +895,7 @@
     "tests/test_continuous_submit_window.py",
     "tests/test_failed_focus_native.py",
     "tests/test_failed_focus_return.py",
+    "tests/test_feishu_confirmation_reobserve.py",
     "tests/test_feishu_focus_restore.py",
     "tests/test_feishu_full_ax_body_proof.py",
     "tests/test_feishu_nonchat_navigation.py",
